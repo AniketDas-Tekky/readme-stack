@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, ready_for_review, synchronize]
 
+# GITHUB_TOKEN only backs the first checkout; pushes and PRs use README_STACK_TOKEN.
+permissions:
+  contents: read
+
 concurrency:
   group: readme-stack-${{ github.event.pull_request.number }}
   cancel-in-progress: true
