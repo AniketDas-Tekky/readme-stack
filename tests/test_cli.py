@@ -199,6 +199,21 @@ def test_unexpected_error_verbose_traceback_masks_key(repo, capsys):
     err = capsys.readouterr().err
     assert "error: unexpected failure: bad key ***" in err
     assert "Traceback" in err
+    assert "sk-secret" not in err
+
+
+@pytest.mark.parametrize("argv", [["--diff", "HEAD~1..HEAD"], []])
+def test_symlinked_readme_is_refused(repo, tmp_path, capsys, argv):
+    outside = tmp_path / "outside.md"
+    outside.write_text("secret\n", encoding="utf-8")
+    (repo / "README.md").symlink_to(outside)
+    repo.commit({"src/app.py": "print('bye')\n"})
+    gen = FakeGenerate()
+    assert run([str(repo), *argv], gen) == 2
+    assert "README.md is a symlink" in capsys.readouterr().err
+    assert not gen.called
+    assert (repo / "README.md").is_symlink()
+    assert outside.read_text(encoding="utf-8") == "secret\n"
 
 
 def test_keyboard_interrupt(repo):

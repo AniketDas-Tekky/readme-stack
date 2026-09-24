@@ -51,8 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="readme-stack",
         description="Generate or update a repository README with an LLM agent.",
         epilog=(
-            "Uses ANTHROPIC_API_KEY or OPENAI_API_KEY, whichever is set. "
-            "Exit codes: 0 ok, 1 runtime/LLM failure, 2 usage or configuration error."
+            "Uses ANTHROPIC_API_KEY or OPENAI_API_KEY, whichever is set (Anthropic if both). "
+            "Exit codes: 0 ok, 1 runtime/LLM failure, 2 usage or configuration error, "
+            "130 interrupted."
         ),
     )
     parser.add_argument(
@@ -134,6 +135,11 @@ def _run(args: argparse.Namespace, env: Mapping[str, str], generate: GenerateFn)
 
     readme_path = root / README
     mode: Mode = "update" if args.diff is not None else "create"
+    # Never follow a symlinked README: reading it could send a file from outside the repo to
+    # the LLM, and writing would silently replace the link with a regular file.
+    if readme_path.is_symlink() and (mode == "update" or not args.dry_run):
+        _err(f"error: {README} is a symlink; refusing to read or replace it")
+        return EXIT_USAGE
     current_readme: str | None = None
     changes: Diff | None = None
 
@@ -207,5 +213,5 @@ def main(
     except Exception as e:
         _err(f"error: unexpected failure: {_mask_keys(str(e), env)}")
         if args.verbose:
-            traceback.print_exc(file=sys.stderr)
+            _err(_mask_keys(traceback.format_exc().rstrip("\n"), env))
         return EXIT_FAILURE
