@@ -1,6 +1,6 @@
 # T6 — Markers and manifest store
 
-Parent plan: `plans/readme-generation.md` (sections "Decisions", "Mode resolution", "Pipeline" steps 1 and 8, "Project structure").
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (sections "Decisions", "Mode resolution", "Pipeline" steps 1 and 8, "Project structure").
 Depends on: T1 (`core/models/manifest.py`, `core/errors.py`). Consumed by: T2 (`resolve_mode`), T18 (preflight), and the commit stage (writes the manifest and marker).
 
 ## 1. Goal

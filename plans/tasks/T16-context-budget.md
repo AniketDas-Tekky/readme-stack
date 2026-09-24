@@ -1,6 +1,6 @@
 # T16 — Workflow context and token budget
 
-Parent plan: `plans/readme-generation.md` (sections "Pipeline": budget paragraph, "Project
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (sections "Pipeline": budget paragraph, "Project
 structure": `workflow/context.py`, `workflow/budget.py`; exit code 5). Depends on: T1 (`config.py`
 `RunConfig`/`Provider`, `core/errors.py`, `core/ports.py`, core model types). Consumers: T12
 (`UsageSink` = `TokenBudget.record`), T15 (tool registry wires `ctx.budget.record` into

@@ -1,6 +1,6 @@
 # T2 — Mode resolution
 
-Parent plan: `plans/readme-generation.md` (section "Mode resolution"). Depends on T1 (scaffolding).
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (section "Mode resolution"). Depends on T1 (scaffolding).
 
 ## 1. Goal
 Implement `resolve_mode()`: a **pure, I/O-free** function in `core/` that maps (a) a snapshot of the

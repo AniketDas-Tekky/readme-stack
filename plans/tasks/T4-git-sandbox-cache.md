@@ -1,6 +1,6 @@
 # T4 — Git wrapper, sandbox, summary cache
 
-Parent plan: `plans/readme-generation.md`. Depends on: T1 (core errors, ports, `ChangedFiles`, test `git_repo` fixture).
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md). Depends on: T1 (core errors, ports, `ChangedFiles`, test `git_repo` fixture).
 
 ## 1. Goal
 Provide the three infra adapters every later stage relies on:

@@ -174,3 +174,18 @@ tests/
 
 ## Risks
 Large-repo context (precomputed tree, windowed reads, component subagents, per-page slices) · cost (token budget, deterministic impact narrowing, no-op detection, dry-run) · beta SDK churn (single adapter, pinned version) · PR noise (stable outline, minimal edits, deterministic manifest) · secret leakage (index + denylist) · hallucinated links (assemble validation) · shallow CI clones (clear `fetch-depth: 0` error).
+
+## Task plans
+Detailed per-task plans (wave 2 of the breakdown):
+- [T2 — Mode resolution](tasks/T2-mode-resolution.md)
+- [T3 — Provider / model resolution](tasks/T3-provider-resolution.md)
+- [T4 — Git wrapper, sandbox, summary cache](tasks/T4-git-sandbox-cache.md)
+- [T5 — Repo index](tasks/T5-repo-index.md)
+- [T6 — Markers and manifest store](tasks/T6-markers-manifest.md)
+- [T7 — ChangeSet](tasks/T7-changeset.md)
+- [T8 — Rendering and link validation](tasks/T8-render-links.md)
+- [T9 — Impact mapping](tasks/T9-impact-mapping.md)
+- [T10 — Deterministic analysis interfaces and minimal implementations](tasks/T10-analysis-stubs.md)
+- [T12 — Prompt loader and agent base](tasks/T12-prompts-agent-base.md)
+- [T16 — Workflow context and token budget](tasks/T16-context-budget.md)
+- [T17 — CLI surface](tasks/T17-cli.md)

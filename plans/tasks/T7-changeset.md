@@ -1,6 +1,6 @@
 # T7 — ChangeSet
 
-Parent plan: `plans/readme-generation.md` ("Decisions", "Pipeline" step 8, "Project structure").
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) ("Decisions", "Pipeline" step 8, "Project structure").
 Depends on: T1 (`core/errors.py`, `core/models/manifest.py`) and T6 (`core/models/docs_state.py`, `publishing/markers.py`, `publishing/manifest_store.py`). Consumed by: the commit stage (`workflow/stages/commit.py`) and `cli/output.py` (prints the dry-run diff).
 
 ## 1. Goal

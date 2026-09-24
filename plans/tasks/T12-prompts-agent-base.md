@@ -1,6 +1,6 @@
 # T12 — Prompt loader and agent base
 
-Parent plan: `plans/readme-generation.md` (sections "Agents", "Project structure": `prompts/`,
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (sections "Agents", "Project structure": `prompts/`,
 `agents/base.py`, `core/ports.py`, `infra/llm/`). Depends on: T1 (core errors, `core.ports.LLM`,
 `Usage`, `ToolSpec`, `FakeLLM`). Consumers: T11 (`infra/llm/adapter.py` implements the port
 defined in §5), T15 (tool registry binds tool names to `ToolSpec`s), T16 (workflow budget is the

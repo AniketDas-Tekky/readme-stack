@@ -1,6 +1,6 @@
 # T3 — Provider / model resolution
 
-Parent plan: `plans/readme-generation.md` (sections "Decisions → Keys", "CLI", "Preflight", `infra/llm/providers.py`).
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (sections "Decisions → Keys", "CLI", "Preflight", `infra/llm/providers.py`).
 
 ## 1. Goal
 Provide one pure, deterministic function that turns the process environment plus the `--provider`

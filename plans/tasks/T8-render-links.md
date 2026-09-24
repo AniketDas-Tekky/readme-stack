@@ -1,6 +1,6 @@
 # T8: Rendering and link validation
 
-Parent plan: `plans/readme-generation.md` (Pipeline step 7 "Assemble", "Rendered fact blocks & templates",
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (Pipeline step 7 "Assemble", "Rendered fact blocks & templates",
 "Risks: hallucinated links"). Depends on T1 (`core/models/plan.py`). It reuses the T5 `FileIndex` type
 (`core/models/repo.py`) and stays compatible with T6 (`publishing/markers.py`, `ManifestEntry.kind`).
 Consumer: the Assemble stage (a later task), which runs render → fill facts → validate links →

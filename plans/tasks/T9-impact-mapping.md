@@ -1,6 +1,6 @@
 # T9 — Impact mapping (`analysis/impact.py`)
 
-Parent plan: `plans/readme-generation.md` (Pipeline step 2 "Impact", Verification "impact mapping").
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (Pipeline step 2 "Impact", Verification "impact mapping").
 Depends on: T1 (`core/models/impact.py`: `ChangeStatus`, `ChangedFile`, `ChangedFiles`, `ImpactReport`;
 `core/models/manifest.py`: `Manifest`, `ManifestEntry`). Consumes the output of T4's
 `Git.changed_files()` and the T6 manifest. Deterministic: no LLM, no network, no subprocess, no

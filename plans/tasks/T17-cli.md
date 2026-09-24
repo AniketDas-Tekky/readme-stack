@@ -1,6 +1,6 @@
 # T17 — CLI surface
 
-Parent plan: `plans/readme-generation.md` (sections "CLI", "Decisions", "Project structure").
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (sections "CLI", "Decisions", "Project structure").
 Depends on: T1 (`config.py`, `core/errors.py`, `__version__`, entry point). Uses T3's public
 `parse_model_flag` (pure, no I/O). Consumed by: T22 (implements the real `run_pipeline` against
 the contract defined here). Reuses message text from T2 (R0a/R0b) and T3 (`M_CONFLICT`,

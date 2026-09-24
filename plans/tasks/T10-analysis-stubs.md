@@ -1,6 +1,6 @@
 # T10: Deterministic analysis interfaces and minimal implementations
 
-Parent plan: `plans/readme-generation.md`, sections "Deterministic tools" and "Project structure" (`analysis/`).
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md), sections "Deterministic tools" and "Project structure" (`analysis/`).
 Depends on: T1 (package layout, pydantic, `core/models/repo.py` `FileIndex`/`FileEntry`) and, for tests
 only, T5 (`build_file_index`, `detect_language` language ids).
 Rule: nothing under `analysis/` calls an LLM, the network, subprocesses or `readme_stack.infra`.

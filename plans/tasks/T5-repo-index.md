@@ -1,6 +1,6 @@
 # T5 — Repo index (`analysis/repo_index.py`)
 
-Parent plan: `plans/readme-generation.md` (Preflight step 1, Sandbox paragraph, "Risks: secret leakage").
+Parent plan: [`plans/readme-generation.md`](../readme-generation.md) (Preflight step 1, Sandbox paragraph, "Risks: secret leakage").
 Depends on: T1 (`core/models/repo.py`). Must not call an LLM, the network or subprocesses.
 
 ## 1. Goal
