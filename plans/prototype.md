@@ -255,6 +255,98 @@ The docstrings double as the tool descriptions the model sees once `agent.py` wr
 12. A huge file → output capped near `MAX_READ_BYTES`, with a continuation note.
 13. A file removed after indexing → `error: cannot read`.
 
+### 4. `agent.py` + `prompts/` — run the agent
+**Purpose:** the only module that imports `ai`. It builds the SDK model from `LLMConfig`, wraps `RepoTools` as SDK tools, assembles the prompts for the mode, runs one agent loop, and returns the README markdown.
+
+**SDK facts used** (from ai-python.dev docs):
+- `ai.get_provider(name, api_key=...)` + `ai.Model(id=..., provider=...)`.
+- `ai.Agent(tools=[...])`, with `async with agent.run(model, messages, output_type=...) as stream`, then `stream.output`.
+- `@ai.tool` on async functions: the docstring becomes the description and the type hints become the schema. A tool that raises becomes an error result the model sees.
+- `ai.events.ToolEnd.tool_call.tool_name` for logging.
+- `ai.testing.FakeModel` / `ai.testing.tool_call` for offline tests.
+
+**Interface**
+```python
+Mode = Literal["create", "update"]
+MAX_TOOL_CALLS = 80
+
+class AgentError(Exception):
+    """LLM/agent failure; the CLI maps it to exit code 1."""
+
+class ReadmeOutput(pydantic.BaseModel):
+    markdown: str = pydantic.Field(description="The complete README.md content")
+
+@dataclass(frozen=True)
+class ReadmeRequest:
+    mode: Mode
+    repo_name: str
+    current_readme: str | None = None   # required for update
+    diff: Diff | None = None            # required for update (git.Diff)
+
+def load_prompt(name: str) -> str: ...                       # importlib.resources: readme_stack/prompts/<name>.md
+def build_prompts(req: ReadmeRequest, tools: RepoTools) -> tuple[str, str]: ...   # (system, user); pure
+def build_model(cfg: LLMConfig) -> ai.Model: ...
+def make_sdk_tools(tools: RepoTools, log: Callable[[str], None] | None = None) -> list: ...
+async def generate_readme(cfg: LLMConfig, tools: RepoTools, req: ReadmeRequest, *,
+                          model: ai.Model | None = None,
+                          log: Callable[[str], None] | None = None) -> str: ...
+```
+
+**Behavior**
+- **`build_prompts`:** system = `system.md`. User = `create.md` or `update.md` rendered with `string.Template.substitute`, so a missing variable fails loudly. The variables:
+  - create: `$repo_name`, `$file_tree` (= `tools.list_files("")`, already capped).
+  - update: `$repo_name`, `$current_readme`, `$diff_stat`, `$diff_patch`, `$truncation_note` (a note to read files for detail when `diff.truncated`, else empty).
+  - Update without `current_readme` or `diff` → `ValueError` (a programming error; the CLI checks first).
+- **`make_sdk_tools`:** async `@ai.tool` wrappers named `list_files` and `read_file`, with the same parameters and docstrings as the `RepoTools` methods, delegating to them.
+  - They share a call counter. After `MAX_TOOL_CALLS`, they return `error: tool call limit reached; write the README now with what you know`. This is a runaway guard that doesn't depend on any SDK step-limit option.
+  - Each call is logged as `tool: read_file src/cli.py` via `log` (for `-v`).
+- **`generate_readme`:**
+  - `model = model or build_model(cfg)`.
+  - Messages: `[ai.system_message(system), ai.user_message(user)]`.
+  - Run `ai.Agent(tools=make_sdk_tools(...))` with `output_type=ReadmeOutput`, and drain the stream.
+  - Result = `stream.output.markdown.strip() + "\n"`.
+  - Blank markdown → `AgentError("model returned an empty README")`.
+  - Any exception from the SDK run → `AgentError(f"LLM run failed: {type(e).__name__}: {e}")`. The config's key is never interpolated.
+
+**Prompts** (`src/readme_stack/prompts/`, package data)
+- `system.md`:
+  - Role: a senior engineer writing a README for technical readers.
+  - The required section order from "README format" above.
+  - Rules:
+    - Only state facts verified by reading files.
+    - Commands must be copied from real manifests or scripts.
+    - Paths must exist; use relative links.
+    - No marketing language and no invented features.
+  - Return the complete README in the `markdown` field.
+- `create.md`: the repo name and top-level tree. Steps:
+  1. Read the manifest and build files.
+  2. Find the entry points.
+  3. Read the core modules of each major directory.
+  4. Then write.
+- `update.md`:
+  - Includes the repo name, current README, diff stat and diff patch (+ truncation note).
+  - Steps:
+    1. Decide which sections the change affects.
+    2. Verify with the tools.
+    3. Edit only those sections and keep all other text verbatim.
+  - If nothing documentation-relevant changed, return the README unchanged.
+
+**Tests (`tests/test_agent.py`)** are offline and use `ai.testing.FakeModel`.
+1. All three prompts load; `system.md` names every required section.
+2. `build_prompts` in create mode → the user prompt contains the repo name and the `list_files("")` tree, and no `$` placeholders remain.
+3. In update mode → contains the current README, stat and patch. The truncation note appears only when `diff.truncated`.
+4. Update without a diff → `ValueError`.
+5. SDK tool wrappers delegate to `RepoTools`. After `MAX_TOOL_CALLS` (monkeypatched small) they return the limit error. `log` receives `tool: <name> <arg>`.
+6. `generate_readme` with a FakeModel scripted as: an assistant `read_file` tool call, then `{"markdown": "# Demo\n..."}` → returns the markdown ending in one newline.
+7. A FakeModel returning `{"markdown": "  "}` → `AgentError`.
+8. A model whose run raises → `AgentError`, and the message doesn't contain the API key.
+9. `build_model` passes the provider name and key to `ai.get_provider` (monkeypatched).
+
+**Risks and fallbacks** (verify during implementation):
+- If `@ai.tool` rejects closures, build the tools with `ai.Tool(...)` directly, or bind them through a module-level registry.
+- If `output_type` isn't supported on `agent.run` for a provider, drop it: ask for the README as the final text and use `stream.text`.
+- If FakeModel's strict history matching makes test 6 brittle, monkeypatch `ai.Agent.run` instead.
+
 ## Implementation notes
 - The SDK is a public beta. Confirm the exact `ai.Agent` / `ai.get_provider` / `output_type` usage and any step-limit option against https://ai-python.dev/docs when implementing. Keep all of it inside `agent.py`.
 - Small enough for one or two tasks under the CLAUDE.md workflow (e.g. T-A: config + git + tools + tests; T-B: agent + prompts + cli + packaging/CI/README).
