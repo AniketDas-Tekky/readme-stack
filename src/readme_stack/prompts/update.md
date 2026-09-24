@@ -34,8 +34,9 @@ Work in this order:
 3. **Edit only those sections and keep all other text verbatim**: same wording, headings,
    order, formatting and links. Match the README's existing structure and style even where it
    differs from the structure in your instructions; do not reorganize, reformat or "improve"
-   unaffected text. Remove statements the change made false, and add new sections only for
-   genuinely new components or features.
+   unaffected text. The rule to state only verified facts applies to what you add or change;
+   do not delete unaffected text just because you did not re-verify it. Remove statements the
+   change made false, and add new sections only for genuinely new components or features.
 
 If nothing documentation-relevant changed, return the current README unchanged.
 
