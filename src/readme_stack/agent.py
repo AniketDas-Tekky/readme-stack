@@ -79,7 +79,9 @@ def build_model(cfg: LLMConfig) -> ai.Model:
     return ai.Model(id=cfg.model, provider=provider)
 
 
-def make_sdk_tools(tools: RepoTools, log: Callable[[str], None] | None = None) -> list:
+def make_sdk_tools(
+    tools: RepoTools, log: Callable[[str], None] | None = None
+) -> list[ai.AgentTool]:
     """Wrap ``tools`` as ``list_files`` / ``read_file`` SDK tools sharing one call budget."""
     calls = 0
 
