@@ -51,7 +51,7 @@ readme-stack --diff main..HEAD
 readme-stack --model <id>
 ```
 
-Progress messages and errors go to stderr. Only `--dry-run` writes to stdout, so
+Progress messages and errors go to stderr. During a run, only `--dry-run` writes to stdout, so
 `readme-stack --dry-run > NEW_README.md` works.
 
 ### Options
@@ -76,7 +76,7 @@ readme-stack [-h] [--diff RANGE] [--model ID] [--dry-run] [-v] [--version] [REPO
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`   | Success. Also returned when the `--diff` range has no changes (nothing is written) or the updated README is identical to the current one.              |
 | `1`   | Runtime or LLM failure (the agent run failed, the model returned an empty README, or an unexpected error).                                             |
-| `2`   | Usage or configuration error: bad arguments, no API key, not a git repository, invalid range, `--diff` without an existing `README.md`, or a symlinked `README.md`. |
+| `2`   | Usage or configuration error: bad arguments, no API key, not a git repository (or `git` missing or failing), invalid range, `--diff` without an existing `README.md`, or a symlinked `README.md`. |
 | `130` | Interrupted (Ctrl-C).                                                                                                                                   |
 
 ## How it works
@@ -94,7 +94,8 @@ parse args → resolve key/model → find git root → [update: compute diff] �
    to read full files instead. An empty diff exits 0 without calling the LLM.
 3. **Agent** (`agent.py`): one agent run with a system prompt (README structure and style
    rules, including "only state facts from files you actually read") and a mode-specific user
-   prompt. Create mode gets the repo name and the top-level file tree. Update mode gets the
+   prompt. Create mode gets the repo name and the file tree (the `list_files` output for the repo root,
+   capped at 500 entries). Update mode gets the
    current README, the diff stat and the (possibly truncated) patch, and is told to edit only
    the affected sections. The agent returns the README as structured output.
 4. **Write** (`cli.py`): print it for `--dry-run`, or write `README.md` atomically (temp file in
@@ -159,6 +160,8 @@ tests/                 # pytest suite; conftest.py provides a temporary git repo
 action.yml             # placeholder GitHub Action, to be replaced by the upcoming wrapper
 plans/                 # design and task plans
 pyproject.toml         # package metadata, `readme-stack` entry point, ruff/pytest config
+uv.lock                # locked dependencies (CI uses `uv sync --locked`)
+CLAUDE.md              # development workflow for Claude Code agents
 .github/workflows/ci.yml
 ```
 
