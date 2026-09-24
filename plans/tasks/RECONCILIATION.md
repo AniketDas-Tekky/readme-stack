@@ -2,8 +2,8 @@
 
 Source of truth: `plans/tasks/T1-scaffolding.md`. Every implementation agent applies the
 amendments for its own task below on top of its plan. Where a plan and this file disagree, this
-file wins. Items in section (d) are provisional until the user decides. Implement the
-recommendation unless told otherwise.
+file wins. Section (d) decisions were resolved by the user on 2026-09-24.
+Implement them as recorded there.
 
 ## (a) Canonical names
 
@@ -85,7 +85,7 @@ Task numbers: **T18** = preflight, **T22** = pipeline, **T14** = tools/fs, **T11
 - The models exist exactly as in the T5 plan §5, including `paths()`, `get()`, `__contains__` and `readme`. Validation rejects unsorted or duplicate `files`, so build them sorted.
 - `is_owned_output(path, docs_dir)` normalizes `docs_dir` with `core.paths.normalize_rel_path` and checks with `is_within_dir`. The strict `normalize_path` stays as planned.
 - No `tests/unit/analysis/__init__.py`.
-- `id_*` narrowing and the `.env.example` allow-list are pending decision (d)3. Implement as planned.
+- `id_*` is narrowed to SSH key names and `.env.example`-style templates are allow-listed, per decision (d)3 (accepted).
 
 ### T6 (markers, manifest store): 9
 - **Do not create `core/models/docs_state.py`** (T1 owns it). `DocsState.manifest_path` is a property, not a field. Add the new `legacy_files` field.
@@ -112,7 +112,7 @@ Task numbers: **T18** = preflight, **T22** = pipeline, **T14** = tools/fs, **T11
 - Use `DocPlan.readme`, `DocPlan.subpages`, `DocPlan.page(id)` and `FileIndex.paths()` from T1.
 - `PageSpec` lists (`source_paths`, `sections`, `links_to`) are `list[str]` with defaults. `id` must match `PAGE_ID_PATTERN`, so fixture ids must be slugs.
 - No `tests/unit/publishing/__init__.py`. Templates stay in `publishing/templates/` (T8 creates it).
-- Q1 and Q2 (broken code paths, auto-fix) are pending decision (d)5.
+- Broken links: auto-apply the deterministic `suggestion`, then drop what is still broken (text kept). Code paths stay report-only and feed the repair round. Per decision (d)5, option (b), accepted.
 
 ### T9 (impact mapping): 6
 - Map `ImpactReport` fields exactly as in T1: `affected_pages`, `readme_affected`, `reasons`, `dropped_pages`, `proposed_pages`, `leftover_notes`. Closes Q7.
@@ -128,14 +128,14 @@ Task numbers: **T18** = preflight, **T22** = pipeline, **T14** = tools/fs, **T11
 - `FakeParser`, `write_tree` and `index_for` are exposed as **fixtures** in `tests/unit/analysis/conftest.py` (for example `fake_parser_cls` returns the class). Test modules cannot import them. No `__init__.py`.
 - Test 39: keep the network, subprocess and `tree_sitter` bans. Layer rules are also covered globally by T1 `test_layering.py`, and both must pass.
 - Test 40: `tests/fixtures/repos/` is empty after T1, so parametrize over the tmp fixtures, plus any checked-in repos found at runtime.
-- The extras beyond the brief are pending decision (d)8.
+- **Defer the extras** per decision (d)8 (user override). Remove dependency extraction and the real `parse_diff_hunks`/`symbols_for_hunks` implementation, plus the extra parser Protocol methods (`resolve_import`, `references`) and the component-candidate unwrap heuristics. Keep their typed signatures and models where the brief needs them; they return empty results. Keep the `interface_extractors` name from the parent plan. Drop the tests for the removed behaviour. Move the removed items to the later "tools in detail" step.
 
 ### T12 (prompts, agent base): 5
 - `Usage` lives in `core/models/usage.py` and is re-exported by `core.ports`. Importing it from `core.ports` is fine. Closes Q4.
 - The error set in `core/errors.py` is as listed. `ToolError` is the base of `SandboxViolation`/`FileAccessError`, and `subagent_tool` still converts `LLMError`/`AgentError` into `ToolError`.
 - T1 provides `FakeLLM` per T12 §5.3 plus: `FakeResponse.when` routing, `calls_for()`, `pending()`, `assert_exhausted()`, and invalid dict output raises `LLMOutputError` with usage. Error tool-result texts: `error: unknown tool '<n>'`, `error: invalid arguments: ...`, `error: <msg>`. Test 28 asserts `is_error` only.
 - T12 creates the `prompts/` package (T1 does not). `agents/__init__.py` already exists.
-- Strict unused variables are pending decision (d)4. Q2 (tuple return) is closed: keep `tuple[T, Usage]`.
+- Unused prompt variables raise (strict), per decision (d)4 (accepted). Q2 (tuple return) is closed: keep `tuple[T, Usage]`.
 
 ### T16 (context, budget): 6
 - The task references change: the "T17 pipeline/stages" become **T22** (pipeline, stages, the `call_agent` helper) and **T18** (preflight). T17 is the CLI.
@@ -152,7 +152,7 @@ Task numbers: **T18** = preflight, **T22** = pipeline, **T14** = tools/fs, **T11
 - The exit-3 class is `EnvError`, and `BUDGET_EXCEEDED` is 5 (closes Q5).
 - Replace T1's stub `cli/app.py` wholesale and delete `tests/unit/cli/test_app_stub.py`. Keep T1's `tests/unit/cli/test_version.py` green, including `--bogus` → 2.
 - `RunConfig.__post_init__` raises `ValueError` for invalid values. `build_config` must validate first, so `ValueError` never reaches the user.
-- Q2 (REPO nonexistent) and Q3 (usage on failure) are pending decisions (d)6 and (d)7. Q4: keep the full block.
+- A REPO that does not exist or is not a directory → exit 2, per decision (d)6. Print the `tokens:` usage line on exits 1 and 5, using the `usage_report` T22 attaches to the error, per decision (d)7. Both accepted. Q4: keep the full block.
 
 ## (c) Cross-task behaviour conflicts and resolutions
 
@@ -170,13 +170,13 @@ Task numbers: **T18** = preflight, **T22** = pipeline, **T14** = tools/fs, **T11
 12. **`SandboxViolation` exit code (T4).** It is a `ToolError` (exit 1), so it reaches the model as a tool error and never aborts a run.
 13. **Minor items resolved as proposed:** a `--model provider:id` prefix counts as a provider choice (T3 Q1), the prefix is case-insensitive (T3 Q4), and a single rev `A` means `A..HEAD` (T4 Q3). A `manifest.docs_dir` mismatch is INVALID, which leads to REFUSE unless `--force` (T6 Q3). An empty docs dir with no manifest still REFUSEs (T6 Q4). Subagent failures become tool errors (T12 Q5). Hand-edited pages dropped from the plan are released (T7 Q3).
 
-## (d) Decisions for the user
+## (d) Decisions for the user (resolved 2026-09-24)
 
-1. **Newer README marker** (no manifest, or an older one) → exit 3, like a newer manifest (T2 Q1). Options: (a) exit 3; (b) treat the README as foreign. **Recommend (a):** never overwrite a newer tool's output.
-2. **`--diff` over docs in an older format** → exit 4 "run without --diff first" (T2 Q2). Options: (a) exit 4; (b) silently RECREATE. **Recommend (a):** `--diff` promises a scoped, cheap run.
-3. **Secret denylist:** narrow `id_*` to SSH key names, and allow-list `.env.example`-style templates (T5 Q1/Q2). Options: (a) narrow and allow-list; (b) the literal `id_*` and `.env*`. **Recommend (a):** otherwise `id_utils.py` and similar files vanish from the docs. The templates contain no secrets.
-4. **Strict unused prompt variables** (T12 Q1). Options: (a) an unused variable raises; (b) extras are ignored, so one shared variable set can be passed to every prompt. **Recommend (a):** typos fail in tests.
-5. **Broken links and code paths** (T8 Q1/Q2). Options: (a) links are dropped (text kept) and code paths are report-only; (b) additionally auto-apply the deterministic `suggestion` (repo-root reading) before dropping; (c) code paths are also un-backticked. **Recommend (b):** it fixes the most common LLM mistake for free. Code paths stay report-only and feed the repair round.
-6. **REPO that does not exist or is not a directory** (T17 Q2). Options: exit 2 (bad argument) or 3 (environment). **Recommend 2.** A directory that is not the git top level stays 3.
-7. **Token usage on failure** (T17 Q3). Options: (a) print nothing extra; (b) T22 attaches the budget report to the escaping `ReadmeStackError` (an optional `usage_report` attribute set in the pipeline's top-level handler), and the CLI prints the `tokens:` line on exits 1 and 5. **Recommend (b)**, especially for exit 5.
-8. **T10 extras beyond the brief:** dependency extraction from pyproject/package.json, real `parse_diff_hunks`/`symbols_for_hunks`, and component-candidate unwrap heuristics (T10 Q3/Q4). Options: keep them or stub them. **Recommend keeping** dependency extraction and diff-hunk parsing (small, pure, well tested).
+1. **Newer README marker** (no manifest, or an older one) → exit 3, like a newer manifest (T2 Q1). Options: (a) exit 3; (b) treat the README as foreign. **Recommend (a):** never overwrite a newer tool's output. **Resolved: (a) exit 3.**
+2. **`--diff` over docs in an older format** → exit 4 "run without --diff first" (T2 Q2). Options: (a) exit 4; (b) silently RECREATE. **Recommend (a):** `--diff` promises a scoped, cheap run. **Resolved: (a) exit 4.**
+3. **Secret denylist:** narrow `id_*` to SSH key names, and allow-list `.env.example`-style templates (T5 Q1/Q2). Options: (a) narrow and allow-list; (b) the literal `id_*` and `.env*`. **Recommend (a):** otherwise `id_utils.py` and similar files vanish from the docs. The templates contain no secrets. **Resolved: (a) narrow and allow-list.**
+4. **Strict unused prompt variables** (T12 Q1). Options: (a) an unused variable raises; (b) extras are ignored, so one shared variable set can be passed to every prompt. **Recommend (a):** typos fail in tests. **Resolved: (a) strict.**
+5. **Broken links and code paths** (T8 Q1/Q2). Options: (a) links are dropped (text kept) and code paths are report-only; (b) additionally auto-apply the deterministic `suggestion` (repo-root reading) before dropping; (c) code paths are also un-backticked. **Recommend (b):** it fixes the most common LLM mistake for free. Code paths stay report-only and feed the repair round. **Resolved: (b) auto-fix, then drop.**
+6. **REPO that does not exist or is not a directory** (T17 Q2). Options: exit 2 (bad argument) or 3 (environment). **Recommend 2.** A directory that is not the git top level stays 3. **Resolved: exit 2.**
+7. **Token usage on failure** (T17 Q3). Options: (a) print nothing extra; (b) T22 attaches the budget report to the escaping `ReadmeStackError` (an optional `usage_report` attribute set in the pipeline's top-level handler), and the CLI prints the `tokens:` line on exits 1 and 5. **Recommend (b)**, especially for exit 5. **Resolved: (b) print usage on failure.**
+8. **T10 extras beyond the brief:** dependency extraction from pyproject/package.json, real `parse_diff_hunks`/`symbols_for_hunks`, and component-candidate unwrap heuristics (T10 Q3/Q4). Options: keep them or stub them. **Recommend keeping** dependency extraction and diff-hunk parsing (small, pure, well tested). **Resolved: defer all extras (user override of the recommendation)**; see the T10 amendments in (b).
