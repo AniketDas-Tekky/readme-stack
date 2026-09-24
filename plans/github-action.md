@@ -206,3 +206,137 @@ Test file decision: each script gets its own test file. A1 owns `tests/test_acti
 - **Wave 4:** P6
 - **Wave 5:** P7, A3 (after A1, A2, P1 and P6)
 - **Wave 6:** A4 (after A3 and P7)
+
+
+## A0 spike findings (2026-09-24)
+Sandbox: https://github.com/AniketDas-Tekky/gh-sandbox-2 (public, default branch `main`). Local: gh 2.101.0, git 2.39.5 (macOS), `gh extension install github/gh-stack` → `gh stack github/gh-stack v0.1.1`. All commands ran with stdin redirected from `/dev/null` (no TTY). "GH_TOKEN-only auth" means a wrapper that exports `GH_TOKEN="$(gh auth token)"`, points `GH_CONFIG_DIR` and `XDG_DATA_HOME` at empty temp dirs (so no keyring login and no preinstalled extensions), sets `GIT_CONFIG_NOSYSTEM=1` (drops the osxkeychain helper) and `GIT_TERMINAL_PROMPT=0`. The clone uses `credential.helper '!gh auth git-credential'` so git pushes also authenticate from `GH_TOKEN`. The token was never printed or stored. It's the user's OAuth token (`gho_…`, scopes `repo, workflow, read:org, gist`). Fine-grained PATs and GitHub App tokens were **not** tested.
+
+Setup: `spike/feature` (commit `681f90d`) was pushed and opened with plain `gh pr create` as **#5**. Later scenarios used `spike/feature2` (#8), `spike/feature3` (#9) and `spike/feature4` (#14) the same way. All spike PRs are now closed and all `spike/*` branches deleted; the closed PRs and the run stay visible at the URLs below.
+
+### 1. `gh stack init --base main <head> <branch>` adopts an existing branch with an open PR — **YES**
+```
+$ gh stack init --base main spike/feature spike/readme-pr-5      # exit 0, no prompt
+✓ Adopted 2 branches: main ← spike/feature ← spike/readme-pr-5
+  You're on spike/readme-pr-5 (top of stack).
+  Found PRs for 1 of 2 branches.
+```
+- In a fresh clone (the CI case) it also prints `✓ Created local trunk branch main from origin/main`, so the checkout doesn't need a local `main`.
+- The top branch is **created from the current HEAD** (the feature head) and switched to. It is not created from `origin/<branch>`, even when that remote branch exists from an earlier run. A later `git reset --hard <head.sha>` is harmless but redundant.
+- Stack state is local only, in `.git/gh-stack` (JSON: trunk, branches, PR numbers). A fresh CI checkout has none, so `init` runs on every run, and a second run found `2 of 2` PRs.
+
+### 2. `gh stack submit --auto --open` creates the top PR ready for review and links it into a Stack — **YES** (with a caveat on `--open`)
+```
+$ gh stack submit --auto --open                                  # exit 0, no prompt
+Pushing to origin...
+PR #5 (…/pull/5) for spike/feature is up to date
+✓ Created PR #6 (…/pull/6) for spike/readme-pr-5
+✓ Stack created on GitHub with 2 PRs (stack #7)
+✓ Pushed and synced 2 branches
+```
+- PR #6 (https://github.com/AniketDas-Tekky/gh-sandbox-2/pull/6): `isDraft:false`, `baseRefName: spike/feature`.
+- The REST API shows the link: `GET /repos/{o}/{r}/pulls/6` → `"stack":{"number":7,"size":2,"position":2,"base":{"ref":"main"}}`, and #5 has `position:1`. `GET /repos/{o}/{r}/stacks` lists stack 7 with PRs [5, 6]. The #6 timeline has an `added_to_stack` event. `gh stack view --short` / `--json` shows both PRs.
+- **Title and body with `--auto`:** the title is the branch's commit subject (`docs: update README for #5`). The body is only a gh-stack footer (`<sub>Stack created with GitHub Stacks CLI • Give Feedback 💬</sub>`). (`gh stack link` instead titles new PRs from the branch name, e.g. `spike/readme pr 9`.)
+- `gh pr edit spike/readme-pr-5 --title … --body …` works afterwards, with both keyring and GH_TOKEN auth, and the PR stays in stack 7.
+- **Caveat:** `--open` means "mark new **and existing** PRs as ready for review" (`gh stack submit --help`). I checked this with `gh stack link --open`: after converting contributor PR #9 to draft, the run printed `✓ Marked PR #9 … as ready for review`. So `--open` would un-draft a contributor's PR if they switched it to draft after the triggering event. Without `--open`, #9 stayed a draft.
+
+### 3. `GH_TOKEN` auth works for every gh-stack command — **YES**
+Under GH_TOKEN-only auth: `gh auth status` → `Logged in … (GH_TOKEN)`. All of these exited 0 with no prompts and no rate-limit or permission errors:
+- `gh extension install github/gh-stack --pin v0.1.1` (into the empty `XDG_DATA_HOME`);
+- `gh stack init`, `submit --auto --open` (create path: fresh clone of `spike/feature2`, created #10 in stack #11), `submit` (update path, see 4), `view`, `link`;
+- `gh pr edit`.
+
+`gh stack` pushes through git, and those pushes authenticated with `GH_TOKEN` via the gh credential helper. On the runner, `actions/checkout` with `token:` handles git auth instead. The versions run (6) also showed that the default `GITHUB_TOKEN` is enough to *install* the extension.
+
+### 4. Re-submit after resetting the top branch updates rather than duplicates — **YES**
+Steps: the contributor pushed `c11ce95` to `spike/feature`. In a **fresh clone** with GH_TOKEN-only auth I ran `init` (same args), `git reset --hard c11ce95`, committed a different README, then:
+```
+$ gh stack submit --auto --open                                  # exit 0
+PR #5 (…/pull/5) for spike/feature is up to date
+PR #6 (…/pull/6) for spike/readme-pr-5 is up to date
+✓ Linked to the existing stack on GitHub (2 PRs, already up to date) (stack #7)
+✓ Pushed and synced 2 branches
+```
+- #6 head went from `ee86c7f` to `a52a517` (not a fast-forward). The #6 timeline shows `head_ref_force_pushed`.
+- No new PR was created (`gh pr list --state all` shows only #4, #5, #6 at that point).
+- No errors or prompts.
+
+### 5. Does `submit` push the bottom (feature) branch, and does it force-push? — **YES, it force-pushes it, and it clobbered contributor commits in testing (unsafe)**
+- When the local feature branch equals the remote, the push is a no-op. Remote `spike/feature` stayed `681f90d` across the first submit and `c11ce95` across the second.
+- **Local feature branch behind the remote:** in the original clone, local `spike/feature` and `origin/spike/feature` were both at `681f90d` while the remote was at `c11ce95` (the contributor's newer commit). `gh stack submit --auto --open` exited 0 and printed "PR #5 … is up to date / Pushed and synced 2 branches". Afterwards **the remote `spike/feature` was `681f90d`**: the contributor's commit was erased (#5 timeline: `head_ref_force_pushed`). #6 was also rolled back to its old README commit.
+- The reflog shows why. `submit` first **fetches** the stack branches (`fetch origin +refs/heads/spike/feature:… : fast-forward` to `c11ce95`), then pushes with `--force-with-lease` against the ref it just fetched (`update by push` back to `681f90d`). So the lease never protects against a stale local branch. (`gh stack push --help`: "Uses explicit per-branch --force-with-lease checks".)
+- In CI this happens whenever the contributor pushes between checkout (where `HEAD == head.sha` is checked) and `submit`. That window includes the LLM call. `concurrency: cancel-in-progress` makes it less likely but doesn't close it, because cancellation isn't synchronous.
+- **Alternative tested (never touches the feature branch):** `gh stack link` with **PR numbers** for the bottom resolves them as PRs and skips pushing those branches:
+  - `gh stack link --base main 5 spike/readme-pr-5` printed `Pushing 1 branch to origin...` (only the README branch). The remote `spike/feature` stayed at the contributor's newer `215a3f9` while the local copy was stale at `c11ce95`.
+  - Same with #9: remote `spike/feature3` stayed at `fe5134f` while the local copy was stale.
+  - `gh stack link --base main 14 15` (both PR numbers; #15 created beforehand with plain `gh pr create --base spike/feature4`) pushed nothing: `✓ Created stack with 2 PRs (stack #16)`.
+  - Re-running `link` on an existing stack is idempotent: `✓ Stack with 2 PRs is already up to date`.
+  - Without `--open`, the draft state of the bottom PR is left alone.
+
+### 6. Versions — **YES**
+- gh-stack: **v0.1.1** (latest release, published 2026-09-02; earlier: v0.1.0 2026-07-29). `gh stack --version` → `gh stack version 0.1.1`.
+- ubuntu-latest, from the run on `spike/versions` (push trigger, default `GITHUB_TOKEN`, no custom secrets): https://github.com/AniketDas-Tekky/gh-sandbox-2/actions/runs/36067456816, conclusion success:
+  ```
+  Image: ubuntu-24.04   Version: 20260920.314.1
+  gh version 2.101.0 (2026-09-15)
+  git version 2.55.0
+  gh extension install github/gh-stack --pin v0.1.1  → gh stack  github/gh-stack  v0.1.1
+  gh stack version 0.1.1
+  ```
+  Both are well above the plan's minimums (gh ≥ 2.90, git ≥ 2.20).
+
+### Other observations
+- Nothing needed a TTY. With `--auto`, or with stdin not a terminal, `submit` skips its editor. `init`, `link` and `view` never prompted.
+- No rate-limit or permission errors in about 15 gh-stack calls.
+- `git push --force-with-lease=<branch>` of our own README branch failed with `(stale info)` when the local tracking ref was stale. That's correct behaviour, but for our own branch a plain `--force` (or a lease against the SHA from `git ls-remote`) is what we want.
+- Closing both PRs of a stack closes the stack (`/stacks` → `open:false`). No `unstack` is needed.
+
+### BLOCKER — user decision needed (feature-branch safety, question 5)
+Questions 1, 3 and 4 pass. But the planned `gh stack submit` **does force-push the contributor's feature branch**. It did erase a newer contributor commit in the sandbox whenever the local copy was behind. That breaks the plan's rule "the action must never rewrite the contributor's branch" ("Steps" 5, Feature branch safety). The `HEAD == head.sha` check doesn't prevent it, because the race happens after checkout. Per the plan, A2 should not pick a workaround on its own. Options, with evidence above:
+- **(a) Keep `submit` as planned** and add `git fetch origin <head.ref>` plus "abort if `origin/<head.ref>` ≠ `head.sha`" right before `submit`. This shrinks the race window to seconds but doesn't remove it: data loss is still possible.
+- **(b) Replace `init` + `submit` with our own push plus `gh stack link` using PR numbers** (tested above). The feature branch is never pushed, no local stack state is needed, and `--open` isn't needed (a `gh pr create` PR is ready for review by default), so the contributor's draft state is never changed. Uses only documented gh-stack commands.
+- **(c) Stop and revisit** gh-stack as a whole.
+
+The spike's recommendation is **(b)**.
+
+### Implications for A2/A3
+Setup, either way:
+- `gh --version` check (≥ 2.90);
+- `gh extension install github/gh-stack --pin v0.1.1`;
+- `git config user.name/user.email` for `readme-stack[bot]`;
+- `GH_TOKEN=<github-token>` in the step env (checkout's `token:` covers git pushes).
+
+**If option (b) is chosen (recommended):**
+```
+branch="<prefix>pr-$N"
+existing=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+# README unchanged → close/delete as already planned
+git switch -C "$branch" "$HEAD_SHA"
+git add README.md && git commit -m "docs: update README for #$N"
+git push --force origin "HEAD:refs/heads/$branch"              # only our branch, never head.ref
+if [ -z "$existing" ]; then
+  url=$(gh pr create --base "$HEAD_REF" --head "$branch" --title "docs: update README for #$N" --body "$BODY")
+  pr=${url##*/}; status=created                                # PR is ready for review by default
+else
+  gh pr edit "$existing" --title "docs: update README for #$N" --body "$BODY"
+  pr=$existing; status=updated
+fi
+gh stack link --base "$BASE_REF" "$N" "$pr"                    # PR numbers only: pushes nothing; no --open
+```
+- The fake `gh` in `tests/test_action_publish.py` then needs `pr create` (printing a URL) and `stack link`, instead of `stack init|submit`.
+- Publish case 9 ("feature branch in origin unchanged") becomes a real guarantee rather than a consequence of the HEAD check.
+
+**If option (a) is chosen:** keep the plan's sequence (`gh stack init --base "$BASE_REF" "$HEAD_REF" "$branch"` → commit on the auto-created top branch → `gh stack submit --auto` → `gh pr edit`), with these changes:
+- insert `git fetch origin "$HEAD_REF"` and an abort if `git rev-parse "origin/$HEAD_REF"` ≠ `$HEAD_SHA` immediately before `submit`;
+- drop `--open` on update runs, since it would un-draft the contributor PR (on create runs the guard has already rejected drafts, but the same race applies);
+- the `git reset --hard "$HEAD_SHA"` after `init` is redundant, but harmless;
+- document the remaining race in the README limitations.
+
+In both cases `gh pr edit` is still needed to set the body. (b) sets the title directly at create time. With (a), `--auto` takes the title from the commit subject, and the body is a gh-stack footer.
+
+### Pinned versions
+- `github/gh-stack` **v0.1.1** (`gh extension install github/gh-stack --pin v0.1.1`).
+- ubuntu-latest (ubuntu-24.04, image 20260920.314.1): **gh 2.101.0**, **git 2.55.0**.
+- Minimums to enforce in `publish.sh` stay gh ≥ 2.90 (plan) and git ≥ 2.20.
+
+### User decision (2026-09-24)
+Blocker resolved with option (b): publish.sh pushes ONLY the README branch (`git push --force origin <prefix>pr-<N>`), creates or edits the README PR with `gh pr create` / `gh pr edit`, and then links it into a native Stack with `gh stack link --base <base.ref> <featurePR#> <readmePR#>` (PR numbers, so nothing is pushed). `gh stack submit` and `--open` are NOT used: submit can force-push the contributor's branch, and --open un-drafts the contributor's PR. gh-stack is pinned to v0.1.1.
