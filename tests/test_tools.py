@@ -165,9 +165,20 @@ def test_read_file_not_in_allow_list(tmp_path: Path) -> None:
 # 10
 @pytest.mark.parametrize("path", ["../outside.txt", "/etc/passwd", "a\\b", "src/../a.txt"])
 def test_read_file_invalid_path(tmp_path: Path, path: str) -> None:
-    (tmp_path.parent / "outside.txt").write_text("nope\n")
-    tools = make_tools(tmp_path, {"a.txt": "x\n"})
+    (tmp_path / "outside.txt").write_text("nope\n")
+    tools = make_tools(tmp_path / "repo", {"a.txt": "x\n"})
     assert tools.read_file(path) == f"error: invalid path '{path}' (use repo-relative paths)"
+
+
+def test_read_file_symlink_escaping_root_refused(tmp_path: Path) -> None:
+    (tmp_path / "secret.txt").write_text("SECRET=1\n")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "link.txt").symlink_to(tmp_path / "secret.txt")
+    tools = RepoTools(root=root, files=("link.txt",))
+    out = tools.read_file("link.txt")
+    assert out == "error: 'link.txt' resolves outside the repository"
+    assert "SECRET" not in out
 
 
 # 11
