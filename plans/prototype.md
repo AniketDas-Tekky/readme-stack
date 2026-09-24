@@ -56,7 +56,7 @@ src/readme_stack/
   __main__.py        # python -m readme_stack
   cli.py             # argparse, main(argv=None) -> int, exit-code mapping
   config.py          # resolve_llm(env, model_override) -> LLMConfig(provider, model, api_key)
-  git.py             # repo_root, list_files, diff_stat, diff (+ truncation)
+  git.py             # repo_root, repo_files, diff (+ truncation)
   tools.py           # list_files / read_file logic + make_tools()
   agent.py           # build model (ai.get_provider + ai.Model), run agent, return markdown
   prompts/system.md, prompts/create.md, prompts/update.md   # loaded via importlib.resources
@@ -126,6 +126,67 @@ def resolve_llm(env: Mapping[str, str] | None = None, model: str | None = None) 
 6. `model="custom-id"` → overrides the default; `model="  "` → the default.
 7. `repr(config)` does not contain the key.
 8. Both keys set → anthropic.
+
+### 2. `git.py` — repo root, file list, diff
+**Purpose:** everything that shells out to git. It gives `tools.py` the allowed file list and `agent.py` the diff for update mode. No `ai` import, and no knowledge of the LLM.
+
+**Interface**
+```python
+MAX_DIFF_CHARS = 60_000
+DENYLIST = (".env", ".env.*", "*.pem", "*.key")     # matched against the basename
+
+class GitError(Exception):
+    """Git failure or invalid repo/range; the CLI maps it to exit code 2."""
+
+@dataclass(frozen=True)
+class Diff:
+    stat: str            # `git diff --stat` output
+    patch: str           # unified diff, possibly truncated
+    truncated: bool
+    @property
+    def empty(self) -> bool: ...   # True when there are no changes (stat and patch blank)
+
+def repo_root(path: Path) -> Path: ...
+def repo_files(root: Path) -> list[str]: ...
+def diff(root: Path, rev_range: str, max_chars: int = MAX_DIFF_CHARS) -> Diff: ...
+```
+Named `repo_files` rather than `list_files` to avoid confusion with the tool of that name in `tools.py`.
+
+**Behavior**
+- **`_run(root, *args) -> str`** (internal):
+  - Runs `subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False)`, with no shell.
+  - `FileNotFoundError` → `GitError("git executable not found")`.
+  - `TimeoutExpired` → `GitError("git … timed out")`.
+  - Non-zero exit → `GitError(f"git {args[0]} failed: {stderr.strip()}")`.
+- **`repo_root(path)`:** `git rev-parse --show-toplevel` → a resolved `Path`. Works from any subdirectory. Not a repo, or a missing directory → `GitError("not a git repository: <path>")`.
+- **`repo_files(root)`:** `git ls-files -z -co --exclude-standard`, split on NUL, de-duplicated. It skips:
+  - basenames matching `DENYLIST`
+  - paths that no longer exist (deleted but still tracked)
+  - symlinks and non-regular files
+  - binaries: a NUL byte in the first 8 KiB
+
+  Returns POSIX relative paths, sorted.
+- **`diff(root, rev_range)`:**
+  - Rejects blank ranges or ranges starting with `-` (option injection) → `GitError`, without running git.
+  - Runs `git diff --stat <range> -- . ':(exclude)README.md'` and `git diff <range> -- . ':(exclude)README.md'`. The README is excluded so the model doesn't read its own previous output as a "change".
+  - The range is passed through as given (`A..B`, `A...B`, or a single rev, which git compares against the working tree). A bad rev → `GitError` carrying git's message.
+  - If the patch is longer than `max_chars`: cut at the last newline before the cap, append `"\n… diff truncated ({n} more characters); use read_file to inspect full files"`, and set `truncated=True`.
+
+**Tests (`tests/test_git.py`)** use a `git_repo` fixture: `git init` in `tmp_path`, set a local user name/email, write files, commit.
+1. `repo_root` from a subdirectory → the repo top level.
+2. `repo_root` on a non-repo directory → `GitError`.
+3. `repo_files` includes tracked and untracked-but-not-ignored files, and excludes `.gitignore`d ones.
+4. Excludes `.env`, `.env.local`, `certs/x.pem` and `id.key`; keeps `env.py`.
+5. Excludes a binary file (contains a NUL byte); keeps a UTF-8 text file.
+6. Skips a deleted-but-tracked file and a symlink.
+7. Output is sorted, POSIX-style, with nested paths such as `src/pkg/mod.py`.
+8. `diff("HEAD~1..HEAD")` → the stat lists the changed file, and the patch contains the change.
+9. README.md changes in the range are excluded from both stat and patch.
+10. `diff("HEAD..HEAD")` → `empty is True`.
+11. An unknown rev → `GitError`.
+12. `"--output=/tmp/x"` → `GitError`, and git is never called.
+13. Truncation with a small `max_chars` → cut at a line boundary, the note is appended, `truncated is True`.
+14. `subprocess.run` raising `FileNotFoundError` (monkeypatched) → `GitError("git executable not found")`.
 
 ## Implementation notes
 - The SDK is a public beta. Confirm the exact `ai.Agent` / `ai.get_provider` / `output_type` usage and any step-limit option against https://ai-python.dev/docs when implementing. Keep all of it inside `agent.py`.
