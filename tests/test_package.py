@@ -31,7 +31,8 @@ def test_build_parser_prog():
 
 
 def test_main_accepts_injected_env_and_generate():
-    assert main([], env={}, generate=None) == 0
+    # With an injected empty env there is no API key, so the full CLI exits 2 early.
+    assert main([], env={}, generate=None) == 2
 
 
 def test_python_m_version():
