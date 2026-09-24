@@ -7,6 +7,17 @@ from pathlib import Path
 
 import pytest
 
+_GIT_LOCATION_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+)
+
 
 class GitRepo(Path):
     """Path to a temporary git repository, with helpers to write files and commit.
@@ -57,8 +68,11 @@ class GitRepo(Path):
 def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> GitRepo:
     """An initialised, empty git repository (no commits) on branch ``main``.
 
-    Global and system git config are ignored so tests are hermetic.
+    Global and system git config are ignored, and inherited repo-location variables
+    (e.g. set when pytest runs inside a git hook) are cleared, so tests are hermetic.
     """
+    for var in _GIT_LOCATION_VARS:
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig-global"))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     repo = GitRepo(tmp_path / "repo")

@@ -38,3 +38,11 @@ def test_gitignore_and_untracked(git_repo):
     assert "bin.dat" in listed
     assert "ignored.txt" not in listed
     assert (git_repo / "bin.dat").read_bytes() == b"\x00\x01"
+
+
+def test_inherited_git_dir_is_ignored(tmp_path, monkeypatch, request):
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere"))
+    repo = request.getfixturevalue("git_repo")
+    repo.commit({"a.txt": "a\n"}, "first")
+    assert (repo / ".git").is_dir()
+    assert not (tmp_path / "elsewhere").exists()
