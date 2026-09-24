@@ -221,8 +221,10 @@ the PR that was closed), and are empty otherwise.
 
 - **gh-stack is a public preview.** The action installs `github/gh-stack` pinned at `v0.1.1`
   and checks for gh ≥ 2.90 and git ≥ 2.20. GitHub-hosted Ubuntu runners meet both.
-- **Token types:** the action has only been tested with a user OAuth token. Fine-grained PATs
-  and GitHub App tokens with the permissions above are expected to work but are untested.
+- **Token types:** the gh-stack commands have only been tested with a user OAuth token
+  (scopes `repo` and `workflow`). Fine-grained PATs and GitHub App tokens with the permissions above are expected
+  to work but are untested. If the feature PR changes files under `.github/workflows/`, GitHub
+  may also require workflow write permission to push the README branch.
 - The CLI runs from the action's own checkout (`uv run --locked --no-dev`), so the readme-stack
   version is the one at the action ref you pin.
 
