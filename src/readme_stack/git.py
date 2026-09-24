@@ -117,7 +117,7 @@ def diff(root: Path, rev_range: str, max_chars: int = MAX_DIFF_CHARS) -> Diff:
     """Diff stat and (possibly truncated) patch for ``rev_range``, excluding README.md."""
     if not rev_range or not rev_range.strip():
         raise GitError("diff range must not be empty")
-    if rev_range.startswith("-"):
+    if rev_range.strip().startswith("-"):
         raise GitError(f"invalid diff range: {rev_range!r}")
     stat_out = _run(root, "diff", "--stat", rev_range, *_README_EXCLUDE)
     patch = _run(root, "diff", rev_range, *_README_EXCLUDE)
