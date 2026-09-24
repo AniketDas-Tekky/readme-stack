@@ -172,7 +172,7 @@ Named `repo_files` rather than `list_files` to avoid confusion with the tool of 
   - The range is passed through as given (`A..B`, `A...B`, or a single rev, which git compares against the working tree). A bad rev → `GitError` carrying git's message.
   - If the patch is longer than `max_chars`: cut at the last newline before the cap, append `"\n… diff truncated ({n} more characters); use read_file to inspect full files"`, and set `truncated=True`.
 
-**Tests (`tests/test_git.py`)** use a `git_repo` fixture: `git init` in `tmp_path`, set a local user name/email, write files, commit.
+**Tests (`tests/test_git.py`)** use a `git_repo` fixture defined in `tests/conftest.py` (shared with `test_cli.py`): `git init` in `tmp_path`, set a local user name/email, write files, commit.
 1. `repo_root` from a subdirectory → the repo top level.
 2. `repo_root` on a non-repo directory → `GitError`.
 3. `repo_files` includes tracked and untracked-but-not-ignored files, and excludes `.gitignore`d ones.
@@ -346,6 +346,65 @@ async def generate_readme(cfg: LLMConfig, tools: RepoTools, req: ReadmeRequest, 
 - If `@ai.tool` rejects closures, build the tools with `ai.Tool(...)` directly, or bind them through a module-level registry.
 - If `output_type` isn't supported on `agent.run` for a provider, drop it: ask for the README as the final text and use `stream.text`.
 - If FakeModel's strict history matching makes test 6 brittle, monkeypatch `ai.Agent.run` instead.
+
+### 5. `cli.py` + `__main__.py` — wire it together
+**Purpose:** parse arguments, run the flow in order, turn errors into exit codes, and write the result. It holds no business logic beyond ordering and I/O.
+
+**Interface**
+```python
+GenerateFn = Callable[[LLMConfig, RepoTools, ReadmeRequest], Awaitable[str]]   # + log kwarg
+
+def build_parser() -> argparse.ArgumentParser: ...
+def main(argv: list[str] | None = None, *,
+         env: Mapping[str, str] | None = None,
+         generate: GenerateFn | None = None) -> int: ...     # pyproject entry point
+```
+`env` and `generate` are injectable for tests. They default to `os.environ` and `agent.generate_readme`. `__main__.py` is just `raise SystemExit(main())`.
+
+**Arguments:**
+- `repo`: positional, default `.`.
+- `--diff RANGE`: update mode.
+- `--model ID`
+- `--dry-run`
+- `-v/--verbose`
+- `--version`
+
+argparse's own errors exit with code 2, and `--help` exits 0.
+
+**Flow** (each step fails fast)
+1. `cfg = resolve_llm(env, args.model)`. `ConfigError` → `error: <msg>` on stderr, return 2.
+2. `root = repo_root(Path(args.repo))`. `GitError` → return 2.
+3. **Update mode** (`--diff` given):
+   - `README.md` must exist, or: `error: --diff requires an existing README.md; run without --diff to create one`, return 2.
+   - `d = diff(root, args.diff)` (`GitError` → 2).
+   - If `d.empty`: print `no changes in <range>; README unchanged` to stderr, return 0.
+   - Read the current README.
+4. `tools = RepoTools(root, tuple(repo_files(root)))`. Build `ReadmeRequest(mode, repo_name=root.name, current_readme, diff)`.
+5. Progress on stderr: `readme-stack: <creating|updating> README.md with <provider>/<model>…`. With `-v`, `log` prints each tool call to stderr.
+6. `markdown = asyncio.run(generate(cfg, tools, req, log=log))`:
+   - `AgentError` → `error: <msg>`, return 1.
+   - `KeyboardInterrupt` → return 130.
+   - Any other exception → `error: unexpected failure: <e>` (traceback only with `-v`), return 1.
+7. **Output:**
+   - `--dry-run`: write the markdown to stdout, return 0.
+   - Update mode with an unchanged result: print `README.md already up to date`, return 0.
+   - Otherwise, atomic write: a temp file in `root` (`.README.md.<random>.tmp`), written as UTF-8, then `os.replace` onto `README.md`. Print `wrote README.md (<n> lines)`, return 0.
+
+**Tests (`tests/test_cli.py`)** use the shared `git_repo` fixture (in `tests/conftest.py`, also used by `test_git.py`), a fake env `{"ANTHROPIC_API_KEY": "k"}`, and a fake async `generate` that records its arguments and returns fixed markdown.
+1. `--help` → `SystemExit(0)`, and lists `--diff`, `--model`, `--dry-run`.
+2. No API key → 2, and the "no API key" message is on stderr.
+3. A REPO outside any git repo → 2.
+4. Create mode → returns 0. `README.md` holds the fake markdown. The request has mode `create` and `repo_name == root.name`.
+5. Create mode overwrites an existing README.
+6. `--dry-run` → the markdown on stdout, and README.md is untouched (still absent, or unchanged).
+7. `--diff HEAD~1..HEAD` with no README → 2, and `generate` is not called.
+8. `--diff HEAD..HEAD` (empty) → 0, the "no changes" message, and `generate` is not called.
+9. Update mode → the request has `current_readme` and a non-empty `diff`, and the result is written.
+10. Update result identical to the current README → "already up to date", and the file is unchanged.
+11. `generate` raising `AgentError` → 1, and the message is on stderr.
+12. `-v` → `generate` receives a callable `log`; without `-v`, `log is None`.
+13. `--model custom` → `generate` receives `cfg.model == "custom"`.
+14. `python -m readme_stack --version` (subprocess) → prints the version, exit 0.
 
 ## Implementation notes
 - The SDK is a public beta. Confirm the exact `ai.Agent` / `ai.get_provider` / `output_type` usage and any step-limit option against https://ai-python.dev/docs when implementing. Keep all of it inside `agent.py`.
