@@ -176,7 +176,10 @@ tests/
 Large-repo context (precomputed tree, windowed reads, component subagents, per-page slices) · cost (token budget, deterministic impact narrowing, no-op detection, dry-run) · beta SDK churn (single adapter, pinned version) · PR noise (stable outline, minimal edits, deterministic manifest) · secret leakage (index + denylist) · hallucinated links (assemble validation) · shallow CI clones (clear `fetch-depth: 0` error).
 
 ## Task plans
-Detailed per-task plans (wave 2 of the breakdown):
+Detailed per-task plans. Shared contracts and cross-task amendments: [RECONCILIATION](tasks/RECONCILIATION.md).
+- [T1 — Scaffolding (shared contracts)](tasks/T1-scaffolding.md)
+
+Wave 2:
 - [T2 — Mode resolution](tasks/T2-mode-resolution.md)
 - [T3 — Provider / model resolution](tasks/T3-provider-resolution.md)
 - [T4 — Git wrapper, sandbox, summary cache](tasks/T4-git-sandbox-cache.md)
