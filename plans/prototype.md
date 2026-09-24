@@ -65,7 +65,7 @@ tests/
 ```
 - Remove `src/readme_stack/main.py`. Move `get_input`/`set_output` out, or drop them; the action isn't in scope.
 - Replace `tests/test_main.py`.
-- `pyproject.toml`: add `ai` (pinned exactly, beta) and `pydantic`; entry point `readme_stack.cli:main`; update the description.
+- `pyproject.toml`: add `ai[anthropic,openai]==0.7.0` (pinned exactly, beta) and `pydantic`; entry point `readme_stack.cli:main`; update the description. Details are in module 6.
 - `.github/workflows/ci.yml`: self-test job → `uv run readme-stack --help` (there's no API key in CI).
 - `README.md`: usage section for the CLI.
 - Only `agent.py` imports `ai`, which keeps the beta SDK contained.
@@ -405,6 +405,51 @@ argparse's own errors exit with code 2, and `--help` exits 0.
 12. `-v` → `generate` receives a callable `log`; without `-v`, `log is None`.
 13. `--model custom` → `generate` receives `cfg.model == "custom"`.
 14. `python -m readme_stack --version` (subprocess) → prints the version, exit 0.
+
+### 6. Packaging: `pyproject.toml`, `uv.lock`, CI, README, cleanup
+**Purpose:** make the CLI installable and runnable, keep CI green without an API key, document usage, and remove the GitHub Action boilerplate code the prototype no longer uses.
+
+**`pyproject.toml`**
+- `description = "CLI that uses an LLM agent to generate or update a repository README."`
+- `dependencies = ["ai[anthropic,openai]==0.7.0", "pydantic>=2.13"]`:
+  - `ai` 0.7.0 is the current PyPI release (Python ≥3.12). It is pinned exactly because it's a beta.
+  - The `anthropic` and `openai` extras are required for direct provider access.
+  - `pydantic` is listed explicitly because `agent.py` imports it.
+- `[project.scripts] readme-stack = "readme_stack.cli:main"`.
+- Keep `version = "0.1.0"`, hatchling, the dev group (pytest, ruff), and the ruff settings.
+- Hatchling includes `src/readme_stack/prompts/*.md` automatically as package files. Verify by building a wheel and listing it.
+- Regenerate `uv.lock` with `uv lock`, so CI's `uv sync --locked` passes.
+
+**Package files**
+- `src/readme_stack/__init__.py`: `__version__ = importlib.metadata.version("readme-stack")`, so the version lives only in pyproject. Used by `--version`.
+- Delete `src/readme_stack/main.py` (placeholder logic, plus the `get_input`/`set_output` Action helpers, which are out of scope) and `tests/test_main.py`.
+- Add `tests/conftest.py` with the `git_repo` fixture (see module 2).
+
+**CI (`.github/workflows/ci.yml`)**
+- `test` job: unchanged (`uv sync --locked`, ruff check, ruff format --check, pytest).
+- `self-test` job: replace the `uses: ./` action run with `astral-sh/setup-uv@v7`, `uv sync --locked`, `uv run readme-stack --help` and `uv run readme-stack --version`. There is no API key in CI, so no live run.
+- `action.yml` is left as is for now (out of scope). Note in the README that the Action wrapper comes later.
+
+**`README.md`** (hand-written for now; the tool can regenerate it later as a dogfood test)
+- What it does (create or update a README with an LLM agent).
+- Install: `uv sync`, or `uv tool install .`.
+- Configure: set exactly one of `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
+- Usage examples:
+  - `readme-stack --dry-run -v`
+  - `readme-stack path/to/repo`
+  - `readme-stack --diff main..HEAD`
+  - `readme-stack --model <id>`
+- Options table and exit codes (0/1/2/130).
+- How it works (a 4-step flow plus the 2 tools).
+- Development commands (`uv run pytest`, `uv run ruff check`, `uv run ruff format`).
+- Prototype limitations (single README, 2 modes, one key).
+
+**Checks**
+1. `uv lock && uv sync --locked` succeeds.
+2. `uv run readme-stack --help` / `--version` and `uv run python -m readme_stack --version` work.
+3. `uv build` → the wheel contains `readme_stack/prompts/system.md`, `create.md` and `update.md`.
+4. `uv run ruff check && uv run ruff format --check && uv run pytest` all pass.
+5. No module other than `agent.py` imports `ai`: `grep -rn "^import ai\|^from ai" src/` shows only `agent.py`.
 
 ## Implementation notes
 - The SDK is a public beta. Confirm the exact `ai.Agent` / `ai.get_provider` / `output_type` usage and any step-limit option against https://ai-python.dev/docs when implementing. Keep all of it inside `agent.py`.
