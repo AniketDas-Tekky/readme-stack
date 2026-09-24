@@ -1,33 +1,158 @@
 name: readme-stack
-description: Runs the readme-stack Python script.
+description: >-
+  Updates README.md for a pull request with an LLM and opens the change as a
+  PR stacked on top of it (a native GitHub Stack via gh-stack).
 author: ""
 
 inputs:
-  readme-path:
-    description: Path to the README file, relative to the workspace.
+  github-token:
+    description: >-
+      PAT or GitHub App token with contents and pull-requests write access.
+      Used for checkout, pushing the README branch and opening the stacked PR.
+      GITHUB_TOKEN is not enough: PRs it creates don't trigger workflows.
+    required: true
+  anthropic-api-key:
+    description: Anthropic API key. Set this or openai-api-key.
     required: false
-    default: README.md
+    default: ""
+  openai-api-key:
+    description: OpenAI API key. Set this or anthropic-api-key.
+    required: false
+    default: ""
+  model:
+    description: Model override passed to readme-stack --model.
+    required: false
+    default: ""
+  branch-prefix:
+    description: Prefix of the README branch (the branch is <prefix>pr-<N>).
+    required: false
+    default: readme-stack/
   python-version:
-    description: Python version used to run the script.
+    description: Python version used to run readme-stack.
     required: false
     default: "3.12"
 
 outputs:
-  result:
-    description: Result produced by the script.
-    value: ${{ steps.run.outputs.result }}
+  status:
+    description: >-
+      One of skipped | no-readme | unchanged | created | updated | closed.
+    value: >-
+      ${{ steps.publish.outputs.status || steps.readme.outputs.status
+      || steps.verify.outputs.status || steps.guard.outputs.status }}
+  pr-number:
+    description: Number of the stacked README PR, when one exists.
+    value: ${{ steps.publish.outputs.pr-number }}
+  pr-url:
+    description: URL of the stacked README PR, when one exists.
+    value: ${{ steps.publish.outputs.pr-url }}
 
 runs:
   using: composite
   steps:
+    - name: Guard
+      id: guard
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_DRAFT: ${{ github.event.pull_request.draft }}
+        PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        BRANCH_PREFIX: ${{ inputs.branch-prefix }}
+      run: '"$GITHUB_ACTION_PATH/scripts/action/guard.sh"'
+
+    - name: Check out PR head branch
+      if: steps.guard.outputs.skip == 'false'
+      uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event.pull_request.head.ref }}
+        fetch-depth: 0
+        token: ${{ inputs.github-token }}
+
+    - name: Verify HEAD matches the PR head
+      id: verify
+      if: steps.guard.outputs.skip == 'false'
+      shell: bash
+      env:
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        head="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+        if [[ "$head" != "$PR_HEAD_SHA" ]]; then
+          echo "::notice::readme-stack skipped: branch HEAD ($head) is not the event's head.sha ($PR_HEAD_SHA); a newer push will be handled by its own run"
+          {
+            echo "skip=true"
+            echo "status=skipped"
+          } >>"$GITHUB_OUTPUT"
+        else
+          echo "skip=false" >>"$GITHUB_OUTPUT"
+        fi
+
+    - name: Check for README.md
+      id: readme
+      if: steps.guard.outputs.skip == 'false' && steps.verify.outputs.skip == 'false'
+      shell: bash
+      run: |
+        if [[ -f "$GITHUB_WORKSPACE/README.md" ]]; then
+          echo "skip=false" >>"$GITHUB_OUTPUT"
+        else
+          echo "::notice::README.md not found; readme-stack only updates existing READMEs"
+          {
+            echo "skip=true"
+            echo "status=no-readme"
+          } >>"$GITHUB_OUTPUT"
+        fi
+
+    - name: Check API key
+      if: >-
+        steps.guard.outputs.skip == 'false' && steps.verify.outputs.skip == 'false'
+        && steps.readme.outputs.skip == 'false'
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+      run: |
+        if [[ -z "$ANTHROPIC_API_KEY" && -z "$OPENAI_API_KEY" ]]; then
+          echo "::error::readme-stack needs an LLM key: set the anthropic-api-key or openai-api-key input"
+          exit 1
+        fi
+
     - name: Set up uv
+      if: >-
+        steps.guard.outputs.skip == 'false' && steps.verify.outputs.skip == 'false'
+        && steps.readme.outputs.skip == 'false'
       uses: astral-sh/setup-uv@v7
       with:
         python-version: ${{ inputs.python-version }}
 
     - name: Run readme-stack
-      id: run
+      if: >-
+        steps.guard.outputs.skip == 'false' && steps.verify.outputs.skip == 'false'
+        && steps.readme.outputs.skip == 'false'
       shell: bash
       env:
-        INPUT_README_PATH: ${{ inputs.readme-path }}
-      run: uv run --locked --no-dev --project "$GITHUB_ACTION_PATH" readme-stack
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        MODEL: ${{ inputs.model }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        args=("$GITHUB_WORKSPACE" --diff "$BASE_SHA...$HEAD_SHA")
+        if [[ -n "$MODEL" ]]; then
+          args+=(--model "$MODEL")
+        fi
+        uv run --locked --no-dev --project "$GITHUB_ACTION_PATH" readme-stack "${args[@]}"
+
+    - name: Publish stacked README PR
+      id: publish
+      if: >-
+        steps.guard.outputs.skip == 'false' && steps.verify.outputs.skip == 'false'
+        && steps.readme.outputs.skip == 'false'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        BRANCH_PREFIX: ${{ inputs.branch-prefix }}
+        MODEL: ${{ inputs.model }}
+      run: '"$GITHUB_ACTION_PATH/scripts/action/publish.sh"'
