@@ -18,7 +18,7 @@ BASE_ENV = {
 def run_guard(tmp_path, **overrides):
     """Run guard.sh with a clean env; an override of None removes that variable."""
     output = tmp_path / "github_output"
-    output.touch()
+    output.write_text("")
     env = {"PATH": os.environ["PATH"], "GITHUB_OUTPUT": str(output), **BASE_ENV}
     for key, value in overrides.items():
         if value is None:
@@ -77,6 +77,13 @@ def test_custom_prefix_ignores_default_prefix(tmp_path):
     proc, outputs = run_guard(tmp_path, BRANCH_PREFIX="docs-bot/", PR_HEAD_REF="readme-stack/pr-7")
     assert proc.returncode == 0, proc.stderr
     assert outputs == {"skip": "false"}
+
+
+def test_empty_prefix_falls_back_to_default(tmp_path):
+    proc, outputs = run_guard(tmp_path, BRANCH_PREFIX="")
+    assert proc.returncode == 0, proc.stderr
+    assert outputs == {"skip": "false"}
+    assert_skipped(*run_guard(tmp_path, BRANCH_PREFIX="", PR_HEAD_REF="readme-stack/pr-7"))
 
 
 def test_missing_github_output_fails(tmp_path):
