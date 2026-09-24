@@ -45,7 +45,7 @@ parse args → resolve key/model → git checks → [update: compute diff] → r
 Title + one-paragraph summary → **Architecture** (components, how they interact, data/control flow; Mermaid diagram optional) → **Key components** (one subsection per major module/dir: responsibility, main entry points, notable implementation details) → **Getting started** (install, configure, run, from real manifests/scripts) → **Development** (test/lint/build commands) → **Project layout** (short annotated tree). Rules: every command and path must come from files actually read; no invented features.
 
 ## Tools (the only 2 new tool implementations)
-Plain, testable functions in `tools.py`, wrapped with `@ai.tool` in a `make_tools(root, files)` factory (closures over the repo root and the allowed file list):
+Plain, testable methods on `tools.RepoTools(root, files)`, with no `ai` import. `agent.py` wraps them as `@ai.tool` functions, so only `agent.py` touches the SDK:
 - `list_files(path: str = "") -> str`: the allowed files under `path` as an indented tree, capped (e.g. 500 entries, with a "… N more" line).
 - `read_file(path: str, start_line: int = 1, max_lines: int = 400) -> str`: numbered lines, byte cap. Only paths in the allowed file list are readable (this blocks `..`, absolute paths, ignored and denylisted files). Errors are returned as `"error: …"` strings rather than raised, so the agent can recover.
 
@@ -57,8 +57,8 @@ src/readme_stack/
   cli.py             # argparse, main(argv=None) -> int, exit-code mapping
   config.py          # resolve_llm(env, model_override) -> LLMConfig(provider, model, api_key)
   git.py             # repo_root, repo_files, diff (+ truncation)
-  tools.py           # list_files / read_file logic + make_tools()
-  agent.py           # build model (ai.get_provider + ai.Model), run agent, return markdown
+  tools.py           # RepoTools: list_files / read_file logic (pure, no ai)
+  agent.py           # build model, wrap RepoTools as @ai.tool, run agent, return markdown
   prompts/system.md, prompts/create.md, prompts/update.md   # loaded via importlib.resources
 tests/
   test_config.py  test_git.py  test_tools.py  test_cli.py  test_agent.py
@@ -187,6 +187,73 @@ Named `repo_files` rather than `list_files` to avoid confusion with the tool of 
 12. `"--output=/tmp/x"` → `GitError`, and git is never called.
 13. Truncation with a small `max_chars` → cut at a line boundary, the note is appended, `truncated is True`.
 14. `subprocess.run` raising `FileNotFoundError` (monkeypatched) → `GitError("git executable not found")`.
+
+### 3. `tools.py` — the two agent tools
+**Purpose:** the only two tool implementations the agent gets. Pure Python over the repo root and the allowed file list from `git.repo_files`; no `ai` import. Every result is a string meant for the model. Problems are returned as `"error: …"` strings, never raised, so the agent can correct itself.
+
+**Interface**
+```python
+MAX_LIST_ENTRIES = 500
+DEFAULT_MAX_LINES = 400
+MAX_READ_LINES = 2_000
+MAX_READ_BYTES = 100_000
+
+@dataclass(frozen=True)
+class RepoTools:
+    root: Path
+    files: tuple[str, ...]          # sorted POSIX paths from git.repo_files (the allow-list)
+
+    def list_files(self, path: str = "") -> str:
+        """List repository files under a directory as an indented tree. Use '' for the repo root."""
+
+    def read_file(self, path: str, start_line: int = 1, max_lines: int = DEFAULT_MAX_LINES) -> str:
+        """Read a text file from the repository, returning numbered lines."""
+```
+The docstrings double as the tool descriptions the model sees once `agent.py` wraps these methods.
+
+**Path handling** (shared helper `_normalize(path) -> str | None`):
+- Strip whitespace, a leading `./` and a trailing `/`; `""` and `.` mean the repo root.
+- Backslashes, absolute paths or any `..` segment → `None`, reported as `error: invalid path '<p>' (use repo-relative paths)`.
+- Nothing is read unless it is in `files`, so ignored, denylisted, binary and outside-the-repo files are unreachable, even through symlinks.
+
+**`list_files(path)`**
+- Selects files equal to `path`, or starting with `path + "/"`. No match → `error: no files under '<path>'`.
+- Output: a header `"<n> files under <path or .>"`, then an indented tree relative to `path` (2 spaces per level, directories end with `/`), emitted in sorted order:
+  ```
+  6 files under src
+  readme_stack/
+    __init__.py
+    cli.py
+    prompts/
+      system.md
+  ```
+- More than `MAX_LIST_ENTRIES` files → the first 500, then `… <k> more files; call list_files with a narrower path`.
+
+**`read_file(path, start_line, max_lines)`**
+- A path that isn't in `files` → `error: '<path>' is not a readable file; use list_files to find files`.
+- `start_line` is clamped to ≥ 1, and `max_lines` is clamped to `[1, MAX_READ_LINES]`.
+- Reads the file as UTF-8 with `errors="replace"`. An `OSError` → `error: cannot read '<path>': <reason>`.
+- An empty file → `<path> (empty file)`. `start_line` past the end → `error: start_line <s> is past the end of '<path>' (<total> lines)`.
+- Output:
+  - A header `"<path> (lines <a>-<b> of <total>)"`.
+  - Then the lines, formatted as `f"{n:>5}  {line}"`.
+  - Stops early if the output would exceed `MAX_READ_BYTES`.
+  - If lines remain: `… <r> more lines; call read_file with start_line=<next>`.
+
+**Tests (`tests/test_tools.py`)** build `RepoTools` over a `tmp_path` with a hand-written file tuple. No git is needed.
+1. `list_files("")` → header count, and a nested tree with correct indentation and trailing `/` on directories.
+2. `list_files("src")` and `list_files("./src/")` → the same output, relative to `src`.
+3. `list_files("nope")` → the `error: no files under` message.
+4. More than 500 files → exactly 500 entries plus the "… N more files" line.
+5. `list_files("../x")`, `"/etc"` and `"a\\b"` → the invalid-path error.
+6. `read_file` → the header with the line range, numbered lines, and `max_lines` honoured.
+7. `start_line=3, max_lines=2` → lines 3–4, and a continuation note with `start_line=5`.
+8. `start_line` past the end → error; `start_line=0` → clamped to 1.
+9. A file on disk that isn't in `files` (e.g. `.env`) → the "not a readable file" error.
+10. `../outside.txt` → the invalid-path error.
+11. An empty file → `(empty file)`; invalid UTF-8 bytes → replaced, no exception.
+12. A huge file → output capped near `MAX_READ_BYTES`, with a continuation note.
+13. A file removed after indexing → `error: cannot read`.
 
 ## Implementation notes
 - The SDK is a public beta. Confirm the exact `ai.Agent` / `ai.get_provider` / `output_type` usage and any step-limit option against https://ai-python.dev/docs when implementing. Keep all of it inside `agent.py`.
