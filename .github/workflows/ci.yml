@@ -25,4 +25,4 @@ jobs:
         uses: ./
         with:
           readme-path: README.md
-      - run: echo "Result: ${{ steps.action.outputs.result }}"
+      - run: 'echo "Result: ${{ steps.action.outputs.result }}"'
