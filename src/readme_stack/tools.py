@@ -103,8 +103,13 @@ class RepoTools:
         start = max(1, start_line)
         limit = min(max(1, max_lines), MAX_READ_LINES)
 
+        target = self.root / norm
         try:
-            text = (self.root / norm).read_text(encoding="utf-8", errors="replace")
+            # Defense in depth: git.repo_files already drops symlinks, but a path swapped for a
+            # symlink after indexing must still never escape the repo root.
+            if not target.resolve().is_relative_to(self.root.resolve()):
+                return f"error: '{norm}' resolves outside the repository"
+            text = target.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             reason = exc.strerror or str(exc)
             return f"error: cannot read '{norm}': {reason}"
