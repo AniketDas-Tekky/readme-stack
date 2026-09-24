@@ -21,6 +21,7 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["plans"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
