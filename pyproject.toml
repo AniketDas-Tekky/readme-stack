@@ -1,13 +1,13 @@
 [project]
 name = "readme-stack"
 version = "0.1.0"
-description = "GitHub Action that runs a Python script."
+description = "CLI that uses an LLM agent to generate or update a repository README."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["ai[anthropic,openai]==0.7.0", "pydantic>=2.13"]
 
 [project.scripts]
-readme-stack = "readme_stack.main:main"
+readme-stack = "readme_stack.cli:main"
 
 [dependency-groups]
 dev = [

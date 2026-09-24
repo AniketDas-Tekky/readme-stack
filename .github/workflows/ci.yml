@@ -20,9 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Run action
-        id: action
-        uses: ./
-        with:
-          readme-path: README.md
-      - run: 'echo "Result: ${{ steps.action.outputs.result }}"'
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - run: uv run readme-stack --help
+      - run: uv run readme-stack --version
