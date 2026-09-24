@@ -116,7 +116,9 @@ def test_diff_unknown_rev(git_repo):
 
 
 # 12
-@pytest.mark.parametrize("bad", ["--output=/tmp/x", "-p", "", "   "])
+@pytest.mark.parametrize(
+    "bad", ["--output=/tmp/x", "-p", " --output=/tmp/x", "\t-p", "\n--output=/tmp/x", "", "   "]
+)
 def test_diff_rejects_bad_range_without_running_git(git_repo, monkeypatch, bad):
     def boom(*args, **kwargs):
         raise AssertionError("git must not be called")
