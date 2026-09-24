@@ -82,6 +82,51 @@ tests/
   - Then `uv run readme-stack` to write it.
   - Make a small commit, then `uv run readme-stack --diff HEAD~1..HEAD --dry-run` (update), and check that only the affected sections change.
 
+## Module plans
+Planned one module at a time, bottom-up so each module is planned after its dependencies:
+1. `config.py` · 2. `git.py` · 3. `tools.py` · 4. `agent.py` + `prompts/` · 5. `cli.py` + `__main__.py` · 6. packaging (pyproject, CI, README)
+
+### 1. `config.py` — LLM key and model resolution
+**Purpose:** turn the environment and `--model` into an `LLMConfig` that `agent.py` uses to build the SDK model. Pure function: no I/O besides reading the given env mapping, and no `ai` import.
+
+**Interface**
+```python
+Provider = Literal["anthropic", "openai"]
+
+KEY_ENV_VARS: dict[Provider, str] = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+DEFAULT_MODELS: dict[Provider, str] = {"anthropic": "claude-sonnet-5", "openai": "gpt-5"}
+
+class ConfigError(Exception):
+    """Invalid configuration; the CLI maps it to exit code 2."""
+
+@dataclass(frozen=True)
+class LLMConfig:
+    provider: Provider
+    model: str
+    api_key: str = field(repr=False)   # never shown in repr/logs
+
+def resolve_llm(env: Mapping[str, str] | None = None, model: str | None = None) -> LLMConfig:
+    """Pick the provider whose API key is set and the model to use."""
+```
+
+**Behavior**
+- `env` defaults to `os.environ` (a parameter so tests don't need monkeypatching).
+- Check the providers in `KEY_ENV_VARS` order (anthropic, then openai). The first whose value is non-empty after `.strip()` wins, and the key is stored stripped.
+- Per the prototype assumption only one key is set. If both are, anthropic wins deterministically; no error, not documented as a feature.
+- No key → `ConfigError("no API key found: set ANTHROPIC_API_KEY or OPENAI_API_KEY")`.
+- `model`: if given and non-blank after strip, it is used as-is. Otherwise `DEFAULT_MODELS[provider]`. No `provider:model` parsing.
+- Error messages never include key values.
+
+**Tests (`tests/test_config.py`)**
+1. Only `ANTHROPIC_API_KEY` → provider anthropic, model `claude-sonnet-5`.
+2. Only `OPENAI_API_KEY` → provider openai, model `gpt-5`.
+3. No keys → `ConfigError` with the message above.
+4. Blank or whitespace key values → treated as unset (→ `ConfigError`, or falls through to the other provider).
+5. Key surrounding whitespace is stripped.
+6. `model="custom-id"` → overrides the default; `model="  "` → the default.
+7. `repr(config)` does not contain the key.
+8. Both keys set → anthropic.
+
 ## Implementation notes
 - The SDK is a public beta. Confirm the exact `ai.Agent` / `ai.get_provider` / `output_type` usage and any step-limit option against https://ai-python.dev/docs when implementing. Keep all of it inside `agent.py`.
 - Small enough for one or two tasks under the CLAUDE.md workflow (e.g. T-A: config + git + tools + tests; T-B: agent + prompts + cli + packaging/CI/README).
