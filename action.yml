@@ -1,0 +1,33 @@
+name: readme-stack
+description: Runs the readme-stack Python script.
+author: ""
+
+inputs:
+  readme-path:
+    description: Path to the README file, relative to the workspace.
+    required: false
+    default: README.md
+  python-version:
+    description: Python version used to run the script.
+    required: false
+    default: "3.12"
+
+outputs:
+  result:
+    description: Result produced by the script.
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Run readme-stack
+      id: run
+      shell: bash
+      env:
+        INPUT_README_PATH: ${{ inputs.readme-path }}
+      run: uv run --locked --no-dev --project "$GITHUB_ACTION_PATH" readme-stack
