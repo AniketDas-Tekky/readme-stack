@@ -140,3 +140,69 @@ Scripts use `set -euo pipefail`, read everything from environment variables (no 
 - A1: guard.sh + tests.
 - A2: publish.sh + tests. Depends on A0.
 - A3: action.yml rewrite + CI lint + dogfood workflow + README section. Depends on A1, A2 and prototype P6.
+
+## Proposed Tasks
+Every code task's acceptance also requires `uv run ruff check && uv run ruff format --check && uv run pytest` to pass in its worktree, and `shellcheck` to pass on any script it touches. File ownership is exclusive and respects the prototype split: `pyproject.toml`, `uv.lock` and `tests/conftest.py` belong to P1 (action tasks must not edit them; test helpers live in the action test files themselves). `.github/workflows/ci.yml` is edited by P1 first and then only by A3. `README.md` is edited by P7 first and then only by A4.
+
+Test file decision: each script gets its own test file. A1 owns `tests/test_action_guard.py` (the guard needs no fake `gh`; it only sets env vars and reads `$GITHUB_OUTPUT`). A2 owns `tests/test_action_publish.py`, with the fake-`gh` fixture and the bare-origin/clone fixture defined in that file. These two files replace the single `tests/test_action_scripts.py` listed in "Files".
+
+### A0: gh-stack spike (manual, sandbox repo)
+- **Scope:** no repo code. In a throwaway sandbox repo, run a workflow with a PAT (`GH_TOKEN`) that installs `github/gh-stack` and exercises the "Publish via gh-stack" sequence against a feature branch that has an open PR. Append a `## A0 spike findings` section to the end of `plans/github-action.md` (the only file edited).
+- **Plan refs:** "Decisions" (Stacking, Token); "Steps" 5 (Setup, README changed, Feature branch safety); "Edge cases" (gh-stack preview risk); "Proposed task split" A0.
+- **Acceptance:** the findings section answers each question with evidence (commands, output, links to the sandbox PRs and run):
+  1. `gh stack init --base <base> <head> <branch>` adopts an existing branch that already has an open PR, non-interactively;
+  2. `gh stack submit --auto --open` creates the top PR as ready for review and links it into a Stack with the existing PR;
+  3. `GH_TOKEN` authentication works for every gh-stack command in CI;
+  4. re-submitting after resetting the top branch to a new `head.sha` updates the existing PR (force-push) rather than creating a duplicate;
+  5. whether `submit` pushes the bottom (feature) branch, and whether it force-pushes it;
+  6. the exact gh-stack version to pin, plus the gh and git versions on `ubuntu-latest` at the time.
+
+  If 1, 3 or 4 fails, the findings say so and the work stops for a user decision (no fallback design).
+- **Depends on:** none.
+
+### A1: `guard.sh` + tests
+- **Scope:** create `scripts/action/guard.sh` (executable, `set -euo pipefail`, reads only env vars, writes `status`/`skip` to `$GITHUB_OUTPUT`, emits `::notice::` on skip). Create `tests/test_action_guard.py` (runs the script via `subprocess` with a temp `GITHUB_OUTPUT` file). The env var names are defined here and documented in a header comment so A3 can wire them up.
+- **Plan refs:** "Steps" 1 (Guard); "Files" (script conventions); "Verification" guard cases.
+- **Acceptance:** guard cases 1–4 (draft, fork, `readme-stack/` head, normal PR), plus a non-`pull_request` event → skipped, and a custom branch prefix is honored; `shellcheck scripts/action/guard.sh` is clean.
+- **Depends on:** none.
+
+### A2: `publish.sh` + tests
+- **Scope:**
+  - Create `scripts/action/publish.sh` (executable, `set -euo pipefail`, env-only inputs): gh version check, `gh extension install github/gh-stack --pin <A0 version>`, bot author, then lookup / close / init / reset / commit / submit / edit, then `$GITHUB_OUTPUT` and `$GITHUB_STEP_SUMMARY`. Adjust the commands to match the A0 findings. Document the env var names in a header comment for A3.
+  - Create `tests/test_action_publish.py` with the bare-origin/clone fixtures and the fake `gh`. The fake records its arguments, returns canned JSON, and handles `--version`, `extension install`, `stack init|submit` and `pr list|edit|close`; its `submit` pushes to the bare origin.
+- **Plan refs:** "Steps" 5 (Publish via gh-stack, Feature branch safety); "Files"; "Verification" publish cases; "A0 spike findings".
+- **Acceptance:** publish cases 5–10; `shellcheck scripts/action/publish.sh` is clean; the pinned version matches the A0 findings.
+- **Depends on:** A0.
+
+### A3: `action.yml` rewrite + CI lint + dogfood workflow
+- **Scope:**
+  - Rewrite `action.yml`: inputs and outputs per "`action.yml` interface"; composite steps guard → checkout + `HEAD == head.sha` check → README check → setup-uv + CLI run → publish, with every step after the guard gated on it. Secrets go only through `env`, and there's no `${{ }}` in script bodies.
+  - Modify `.github/workflows/ci.yml` (on top of P1's version): add `shellcheck scripts/action/*.sh` and `actionlint` to the test job, and make sure no job still uses the removed `readme-path` input or `result` output.
+  - Create `.github/workflows/readme.yml`: dogfoods `uses: ./` on this repo's PRs with the consumer `concurrency` block, and is skipped when the secrets are absent.
+- **Plan refs:** "Consumer usage"; "`action.yml` interface"; "Steps" 1–5; "Files"; "Verification" (CI).
+- **Acceptance:**
+  - `actionlint` passes on both workflows, including the input checks for `uses: ./`.
+  - `shellcheck scripts/action/*.sh` and `uv run pytest` pass.
+  - The CLI invocation matches P6's interface (`readme-stack <path> --diff <range> [--model]`).
+  - CI is green on the task branch.
+  - The manual end-to-end checks in "Verification" run after merge; they're listed in the handoff and don't block this task.
+- **Depends on:** A1, A2, P1 (ci.yml), P6 (CLI interface and entry point).
+
+### A4: README "GitHub Action" section
+- **Scope:** modify `README.md` only. Add a "GitHub Action" section covering:
+  - setup, and the required token and its scopes (including why `GITHUB_TOKEN` isn't enough);
+  - the consumer usage YAML with `concurrency`;
+  - a table of inputs and outputs;
+  - a note that gh-stack is in public preview;
+  - limitations: fork and draft PRs are skipped, update mode only, no `closed` trigger.
+- **Plan refs:** "Consumer usage"; "`action.yml` interface"; "Decisions"; "Edge cases".
+- **Acceptance:** the inputs and outputs in the README match `action.yml` exactly; the usage YAML passes `actionlint` when saved as a workflow; P7's CLI docs are untouched.
+- **Depends on:** A3, P7.
+
+### Parallelization
+- **Wave 1:** P1, P2, P4, A0, A1
+- **Wave 2:** P3 (after P1), A2 (after A0)
+- **Wave 3:** P5
+- **Wave 4:** P6
+- **Wave 5:** P7, A3 (after A1, A2, P1 and P6)
+- **Wave 6:** A4 (after A3 and P7)
