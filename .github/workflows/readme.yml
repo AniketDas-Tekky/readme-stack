@@ -1,0 +1,40 @@
+name: README
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+
+# GITHUB_TOKEN only backs the first checkout; pushes and PRs use README_STACK_TOKEN.
+permissions:
+  contents: read
+
+concurrency:
+  group: readme-stack-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  readme:
+    runs-on: ubuntu-latest
+    env:
+      # The secrets context isn't allowed in a job-level `if`, so expose whether
+      # the token is configured and gate the steps on it instead. Repos and fork
+      # PRs without the secret skip cleanly.
+      HAS_TOKEN: ${{ secrets.README_STACK_TOKEN != '' }}
+    steps:
+      - name: Skip without README_STACK_TOKEN
+        if: env.HAS_TOKEN != 'true'
+        run: echo "::notice::README_STACK_TOKEN is not set; skipping readme-stack"
+
+      # `uses: ./` needs the action files in the workspace. The action then does
+      # its own checkout of the PR head branch.
+      - name: Check out action
+        if: env.HAS_TOKEN == 'true'
+        uses: actions/checkout@v7
+
+      - name: Run readme-stack
+        if: env.HAS_TOKEN == 'true'
+        uses: ./
+        with:
+          github-token: ${{ secrets.README_STACK_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}

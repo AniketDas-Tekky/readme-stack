@@ -15,6 +15,10 @@ jobs:
       - run: uv run ruff check
       - run: uv run ruff format --check
       - run: uv run pytest
+      - name: shellcheck
+        run: uvx --from shellcheck-py shellcheck scripts/action/*.sh
+      - name: actionlint
+        run: uvx --from actionlint-py actionlint
 
   self-test:
     runs-on: ubuntu-latest
