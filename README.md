@@ -10,8 +10,8 @@ development commands and project layout. It has two modes:
 - **update** (`--diff RANGE`): revise the existing `README.md` so it reflects the changes in a
   git range, keeping unaffected sections verbatim.
 
-This is a prototype. A GitHub Action wrapper is coming and will be documented here when it
-lands.
+This is a prototype. A [GitHub Action](#github-action) wraps update mode: it keeps the README
+in step with each pull request through a stacked README PR.
 
 ## Install
 
@@ -126,6 +126,118 @@ the agent can correct itself instead of the run failing.
 - **Bounded exploration.** The agent gets at most 80 tool calls per run. After that, each tool
   returns `error: tool call limit reached; write the README now with what you know`.
 
+## GitHub Action
+
+`action.yml` is a composite action that runs readme-stack on pull requests. When a PR is
+opened, marked ready for review, or pushed to (`synchronize`), the action:
+
+1. checks out the PR head branch and runs `readme-stack --diff <base.sha>...<head.sha>` (update
+   mode; the three-dot range covers only the PR's own changes);
+2. if `README.md` changed, commits it to its own branch `readme-stack/pr-<N>` (regenerated from
+   the PR head on every run) and opens a README PR, `docs: update README for #<N>`, whose base
+   is the feature branch;
+3. links the README PR and the feature PR into a native
+   [GitHub Stack](https://docs.github.com/en/pull-requests/get-started/stacked-prs-quickstart)
+   with `gh stack link`.
+
+Reviewers see the docs change as a separate PR and can merge it into the feature branch before
+the feature lands. The action **never pushes to the contributor's branch**: it pushes only its
+own `readme-stack/pr-<N>` branch. Later runs force-push that branch and update the existing
+README PR instead of opening a new one. If a later run finds that the README no longer needs
+changes, it closes the stale README PR with a comment and deletes its branch.
+
+### Setup
+
+1. **Create a token.** The action needs a personal access token or a GitHub App token with
+   **contents: write** and **pull-requests: write** on the repository. It uses the token to
+   check out the repo, push the README branch, and open, edit, close and link the README PR.
+   The default `GITHUB_TOKEN` is not enough: GitHub doesn't trigger workflows for PRs created
+   with it, so your CI would never run on the README PR.
+2. **Add repository secrets** (Settings → Secrets and variables → Actions):
+   - `README_STACK_TOKEN`: the token from step 1;
+   - `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`: the LLM key (see [Configure](#configure)).
+3. **Add a workflow**, for example `.github/workflows/readme.yml`:
+
+```yaml
+name: README
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+concurrency:
+  group: readme-stack-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  readme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: AniketDas-Tekky/readme-stack@v1
+        with:
+          github-token: ${{ secrets.README_STACK_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}   # or openai-api-key
+```
+
+`@v1` assumes a `v1` release tag exists; until one is published, pin a branch or commit SHA
+instead (`AniketDas-Tekky/readme-stack@<sha>`). The action does its own checkout, so no
+`actions/checkout` step is needed. Keep the `concurrency` block: composite actions can't set
+it, and it cancels an in-progress run when a newer push arrives.
+
+### Inputs
+
+| Input               | Required | Default         | Description                                                                                                                                                                          |
+| ------------------- | -------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `github-token`      | yes      |                 | PAT or GitHub App token with contents and pull-requests write access. Used for checkout, pushing the README branch and opening the stacked PR. GITHUB_TOKEN is not enough: PRs it creates don't trigger workflows. |
+| `anthropic-api-key` | no       | `""`            | Anthropic API key. Set this or openai-api-key.                                                                                                                                       |
+| `openai-api-key`    | no       | `""`            | OpenAI API key. Set this or anthropic-api-key.                                                                                                                                       |
+| `model`             | no       | `""`            | Model override passed to readme-stack --model.                                                                                                                                       |
+| `branch-prefix`     | no       | `readme-stack/` | Prefix of the README branch (the branch is \<prefix\>pr-\<N\>).                                                                                                                      |
+| `python-version`    | no       | `3.12`          | Python version used to run readme-stack.                                                                                                                                             |
+
+If neither API key is set, the action fails with an error. If both are set, Anthropic is used,
+as in the CLI.
+
+### Outputs
+
+| Output      | Description                                                         |
+| ----------- | ------------------------------------------------------------------- |
+| `status`    | One of skipped \| no-readme \| unchanged \| created \| updated \| closed. |
+| `pr-number` | Number of the stacked README PR, when one exists.                   |
+| `pr-url`    | URL of the stacked README PR, when one exists.                      |
+
+`status` values:
+
+| Status      | Meaning                                                                                                    |
+| ----------- | ---------------------------------------------------------------------------------------------------------- |
+| `skipped`   | Not a `pull_request` event, a draft or fork PR, the action's own README PR, or the branch moved on since the event. |
+| `no-readme` | The repository has no `README.md`.                                                                         |
+| `unchanged` | The README needs no changes and there is no open README PR.                                                |
+| `created`   | A new README PR was opened and linked into the stack.                                                      |
+| `updated`   | The existing README PR was regenerated and its title and body refreshed.                                   |
+| `closed`    | The README no longer needs changes, so the open README PR was closed and its branch deleted.               |
+
+`pr-number` and `pr-url` are set for `created`, `updated` and `closed` (for `closed` they hold
+the PR that was closed), and are empty otherwise.
+
+### Notes
+
+- **gh-stack is a public preview.** The action installs `github/gh-stack` pinned at `v0.1.1`
+  and checks for gh ≥ 2.90 and git ≥ 2.20. GitHub-hosted Ubuntu runners meet both.
+- **Token types:** the action has only been tested with a user OAuth token. Fine-grained PATs
+  and GitHub App tokens with the permissions above are expected to work but are untested.
+- The CLI runs from the action's own checkout (`uv run --locked --no-dev`), so the readme-stack
+  version is the one at the action ref you pin.
+
+### Limitations
+
+- **Fork PRs are skipped** (secrets and push access aren't available to them), as are **draft
+  PRs**. A draft runs once it's marked ready for review.
+- **Update mode only.** Repositories need an existing `README.md`; otherwise the action stops
+  with `status=no-readme`.
+- **No `closed` trigger.** When the feature PR is merged or closed, the action does nothing;
+  the GitHub Stack handles the chain (for example with `gh stack sync`).
+- **Dogfooding:** this repo runs the action on its own PRs with `uses: ./`
+  (`.github/workflows/readme.yml`). The workflow skips cleanly when the `README_STACK_TOKEN`
+  secret isn't set, which includes fork PRs.
+
 ## Development
 
 ```sh
@@ -157,12 +269,14 @@ src/readme_stack/
   agent.py             # the only module importing `ai`: model, tool wrappers, agent run
   prompts/             # system.md, create.md, update.md (shipped in the wheel)
 tests/                 # pytest suite; conftest.py provides a temporary git repo fixture
-action.yml             # placeholder GitHub Action, to be replaced by the upcoming wrapper
+action.yml             # composite GitHub Action (see "GitHub Action")
+scripts/action/        # guard.sh (skip checks) and publish.sh (README branch, PR, stack link)
 plans/                 # design and task plans
 pyproject.toml         # package metadata, `readme-stack` entry point, ruff/pytest config
 uv.lock                # locked dependencies (CI uses `uv sync --locked`)
 CLAUDE.md              # development workflow for Claude Code agents
 .github/workflows/ci.yml
+.github/workflows/readme.yml  # dogfood: runs the action on this repo's PRs
 ```
 
 ## Prototype limitations
