@@ -39,6 +39,9 @@ elif args[:2] == ["extension", "install"]:
     pass
 elif args[:2] == ["pr", "list"]:
     existing = os.environ.get("FAKE_GH_EXISTING_PR")
+    jq = args[args.index("--jq") + 1] if "--jq" in args else ""
+    if os.environ.get("FAKE_GH_EXISTING_CROSS") and "select(.isCrossRepository | not)" in jq:
+        existing = None  # a fork PR reusing our branch name, filtered out by --jq
     if existing:
         print("%s\\t%s" % (existing, os.environ["FAKE_GH_EXISTING_URL"]))
 elif args[:2] == ["pr", "create"]:
@@ -260,7 +263,11 @@ def test_unchanged_without_pr_does_nothing(tmp_path, env, repo):
 
 def test_readme_commit_contains_only_readme_and_feature_untouched(tmp_path, env, repo):
     clone, origin = repo
+    # The contributor pushes a newer commit after checkout; our local `feature` is stale.
+    newer = git(clone, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "newer", env=env)
+    git(clone, "push", "origin", f"{newer}:refs/heads/feature", env=env)
     feature_before = remote_sha(origin, "feature", env)
+    assert feature_before == newer
     (clone / "README.md").write_text("# Project\n\nChanged.\n")
     # Other dirty and untracked files must not end up in the README commit.
     (clone / "app.py").write_text("print('dirty')\n")
@@ -295,3 +302,47 @@ def test_missing_required_env_fails(tmp_path, env, repo):
     result, _, _ = run_publish(tmp_path, env, clone, PR_HEAD_SHA="")
     assert result.returncode != 0
     assert "PR_HEAD_SHA" in result.stderr
+
+
+def test_fork_pr_reusing_branch_name_is_ignored(tmp_path, env, repo):
+    clone, _ = repo
+    (clone / "README.md").write_text("# Project\n\nChanged.\n")
+
+    result, outputs, _ = run_publish(
+        tmp_path,
+        env,
+        clone,
+        FAKE_GH_EXISTING_PR=EXISTING_PR,
+        FAKE_GH_EXISTING_URL=EXISTING_URL,
+        FAKE_GH_EXISTING_CROSS="1",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert outputs["status"] == "created"
+    calls = gh_calls(env)
+    assert not any(EXISTING_PR in c for c in calls)
+    assert calls[-1] == ["stack", "link", "--base", "main", PR_NUMBER, NEW_PR]
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"PR_NUMBER": "7;rm -rf /"}, "PR_NUMBER must be a number"),
+        ({"PR_HEAD_SHA": "$(touch pwned)"}, "PR_HEAD_SHA must be a full commit SHA"),
+        ({"PR_HEAD_REF": BRANCH}, "collides with the PR head or base branch"),
+        ({"BRANCH_PREFIX": "bad..prefix/"}, "invalid README branch name"),
+    ],
+)
+def test_unsafe_inputs_fail_before_pushing(tmp_path, env, repo, extra, message):
+    clone, origin = repo
+    refs_before = git(origin, "show-ref", env=env)
+    (clone / "README.md").write_text("# Project\n\nChanged.\n")
+
+    result, outputs, _ = run_publish(tmp_path, env, clone, **extra)
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert outputs == {}
+    assert git(origin, "show-ref", env=env) == refs_before
+    assert not (clone / "pwned").exists()
+    assert not any(c[:1] in (["pr"], ["stack"]) for c in gh_calls(env))

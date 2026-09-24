@@ -50,7 +50,8 @@ die() {
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 BRANCH_PREFIX="${BRANCH_PREFIX:-readme-stack/}"
 MODEL="${MODEL:-}"
-[[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || die "PR_NUMBER must be a number, got '$PR_NUMBER'"
+[[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || die "PR_NUMBER must be a number"
+[[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || die "PR_HEAD_SHA must be a full commit SHA"
 
 cd "${GITHUB_WORKSPACE:-.}"
 
@@ -80,6 +81,13 @@ git config user.name "$BOT_NAME"
 git config user.email "$BOT_EMAIL"
 
 branch="${BRANCH_PREFIX}pr-${PR_NUMBER}"
+# Defence in depth (the guard already skips heads that start with the prefix):
+# our branch must be a valid branch name distinct from the PR's head and base,
+# so the push below can never target the contributor's branch.
+git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
+  die "invalid README branch name (check BRANCH_PREFIX): $branch"
+[[ "$branch" != "$PR_HEAD_REF" && "$branch" != "$PR_BASE_REF" ]] ||
+  die "README branch $branch collides with the PR head or base branch"
 title="docs: update README for #${PR_NUMBER}"
 
 write_outputs() {
@@ -100,12 +108,15 @@ write_outputs() {
 }
 
 # Existing open README PR, as "<number>\t<url>" (empty when there is none).
+# `--head` matches the branch name only, so drop fork PRs that reuse our branch
+# name: never edit, link or close a PR whose head we don't control.
 existing=""
 existing_url=""
-lookup="$(gh pr list --head "$branch" --state open --json number,url \
-  --jq '.[] | "\(.number)\t\(.url)"')"
+lookup="$(gh pr list --head "$branch" --state open --json number,url,isCrossRepository \
+  --jq '.[] | select(.isCrossRepository | not) | "\(.number)\t\(.url)"')"
 if [[ -n "$lookup" ]]; then
   IFS=$'\t' read -r existing existing_url <<<"${lookup%%$'\n'*}"
+  [[ "$existing" =~ ^[0-9]+$ ]] || die "could not parse the README PR number from gh pr list"
 fi
 
 # --- README unchanged ------------------------------------------------------
