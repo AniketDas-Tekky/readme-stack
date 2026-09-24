@@ -454,3 +454,63 @@ argparse's own errors exit with code 2, and `--help` exits 0.
 ## Implementation notes
 - The SDK is a public beta. Confirm the exact `ai.Agent` / `ai.get_provider` / `output_type` usage and any step-limit option against https://ai-python.dev/docs when implementing. Keep all of it inside `agent.py`.
 - Small enough for one or two tasks under the CLAUDE.md workflow (e.g. T-A: config + git + tools + tests; T-B: agent + prompts + cli + packaging/CI/README).
+
+## Proposed Tasks
+Every task's acceptance also requires `uv run ruff check && uv run ruff format --check && uv run pytest` to pass in its worktree. File ownership is exclusive: `pyproject.toml`, `uv.lock`, `tests/conftest.py`, `.github/workflows/ci.yml`, and the removal of `main.py`/`test_main.py` belong to P1 only. `README.md` belongs to P7 only.
+
+### P1: Foundation (packaging, entry point, shared fixture, cleanup)
+- **Scope:**
+  - Modify `pyproject.toml`: description, `ai[anthropic,openai]==0.7.0` + `pydantic>=2.13`, entry point `readme_stack.cli:main`.
+  - Regenerate `uv.lock` (`uv lock`).
+  - Modify `src/readme_stack/__init__.py`: `__version__` via `importlib.metadata`.
+  - Create `src/readme_stack/__main__.py` (`raise SystemExit(main())`).
+  - Create a **minimal stub** `src/readme_stack/cli.py`: `build_parser()` + `main(argv=None, *, env=None, generate=None) -> int` that supports `--help` and `--version` and otherwise returns 0. P6 replaces it.
+  - Create `tests/conftest.py` with the `git_repo` fixture (git init in `tmp_path`, local user name/email, write files, commit; returns the repo path).
+  - Delete `src/readme_stack/main.py` and `tests/test_main.py`.
+  - Modify `.github/workflows/ci.yml`: the self-test job runs setup-uv, `uv sync --locked`, `uv run readme-stack --help`, `uv run readme-stack --version`.
+- **Plan refs:** "Files"; module 6 (pyproject, package files, CI); module 2 (the `git_repo` fixture description); module 5 (interface of `main` / `__main__.py`).
+- **Acceptance:** module 6 checks 1, 2 and 4.
+- **Depends on:** none.
+
+### P2: `config.py`
+- **Scope:** create `src/readme_stack/config.py` and `tests/test_config.py`.
+- **Plan refs:** "Flow" step 1; module 1.
+- **Acceptance:** module 1 tests 1–8.
+- **Depends on:** none (stdlib only; touches no shared files).
+
+### P3: `git.py`
+- **Scope:** create `src/readme_stack/git.py` and `tests/test_git.py`. The tests use the `git_repo` fixture from `tests/conftest.py`; do not modify conftest, and add extra commits or files inside the tests.
+- **Plan refs:** "Flow" step 2; module 2.
+- **Acceptance:** module 2 tests 1–14.
+- **Depends on:** P1 (conftest fixture).
+
+### P4: `tools.py`
+- **Scope:** create `src/readme_stack/tools.py` and `tests/test_tools.py`.
+- **Plan refs:** "Tools"; module 3.
+- **Acceptance:** module 3 tests 1–13.
+- **Depends on:** none (stdlib only; tests use `tmp_path`, not git).
+
+### P5: `agent.py` + prompts
+- **Scope:** create `src/readme_stack/agent.py`, `src/readme_stack/prompts/system.md`, `src/readme_stack/prompts/create.md`, `src/readme_stack/prompts/update.md`, and `tests/test_agent.py`. Confirm the SDK API against https://ai-python.dev/docs and apply the module 4 fallbacks if needed.
+- **Plan refs:** "Flow" step 3; "README format"; module 4; "Implementation notes".
+- **Acceptance:** module 4 tests 1–9; module 6 check 5 (only `agent.py` imports `ai`).
+- **Depends on:** P1 (`ai`/`pydantic` deps), P2 (`LLMConfig`), P3 (`Diff`), P4 (`RepoTools`).
+
+### P6: `cli.py` (full implementation)
+- **Scope:** replace the P1 stub `src/readme_stack/cli.py` with the full flow; create `tests/test_cli.py`. `__main__.py` stays as P1 wrote it (change it only if test 14 requires it).
+- **Plan refs:** "CLI"; "Flow" step 4; module 5.
+- **Acceptance:** module 5 tests 1–14.
+- **Depends on:** P1, P2, P3, P4, P5.
+
+### P7: README and final packaging checks
+- **Scope:** modify `README.md` (usage docs per module 6). No code changes. Verify the wheel contents.
+- **Plan refs:** module 6 (`README.md`, Checks); "Verification".
+- **Acceptance:** module 6 checks 1–5 (including `uv build`: the wheel contains the three prompt files); the README's commands, options and exit codes match `readme-stack --help` and module 5.
+- **Depends on:** P6.
+
+### Parallelization
+- **Wave 1:** P1, P2, P4
+- **Wave 2:** P3 (after P1)
+- **Wave 3:** P5 (after P1–P4)
+- **Wave 4:** P6
+- **Wave 5:** P7
